@@ -5,6 +5,26 @@
 
 const DEFAULT_HOMESERVER = "https://915c8197b20b831c52cf97a9fb7e2e104cdc6ae8-8080.dstack-pha-prod7.phala.network/oauth3";
 
+// The wallet's identity. Default: a random userKey kept in extension storage (the
+// localStorage analog) → a per-user subject on the homeserver. No passkey, no owner
+// secret imposed. An owner secret, if set in the popup, overrides for admin use.
+// The session is cached and reused (sessions persist on the node's data volume).
+async function walletBearer(node) {
+  const { secret, walletSession } = await chrome.storage.local.get(["secret", "walletSession"]);
+  if (secret) return secret;
+  if (walletSession) return walletSession;
+  let { userKey } = await chrome.storage.local.get("userKey");
+  if (!userKey) {
+    userKey = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+    await chrome.storage.local.set({ userKey });
+  }
+  const r = await fetch(`${node}/api/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userKey }) });
+  if (!r.ok) throw new Error(`wallet login ${r.status}`);
+  const { session, subject } = await r.json();
+  await chrome.storage.local.set({ walletSession: session, walletSubject: subject });
+  return session;
+}
+
 async function pluginDomains(serverUrl, pluginId) {
   const r = await fetch(`${serverUrl}/api/plugins`);
   if (!r.ok) throw new Error(`/api/plugins ${r.status}`);
@@ -18,10 +38,10 @@ async function pluginDomains(serverUrl, pluginId) {
 // your room, then connect + approve as the wallet owner, and hand the app a scoped
 // token. The user already consented via the approval dialog (the gesture).
 async function providerConnect(opts) {
-  const { serverUrl, secret } = await chrome.storage.local.get(["serverUrl", "secret"]);
+  const { serverUrl } = await chrome.storage.local.get(["serverUrl"]);
   const node = (opts?.node || serverUrl || DEFAULT_HOMESERVER).replace(/\/$/, "");
-  if (!secret) return { error: "Open the OAuth3 wallet once and set your key." };
-  const auth = { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" };
+  const bearer = await walletBearer(node);
+  const auth = { "Authorization": `Bearer ${bearer}`, "Content-Type": "application/json" };
   const r = await fetch(`${node}/api/plugins`);
   if (!r.ok) throw new Error(`/api/plugins ${r.status}`);
   const p = (await r.json()).plugins.find((x) => x.id === opts.plugin);
@@ -47,12 +67,13 @@ async function grabJar(domains) {
 }
 
 async function syncCookies() {
-  const { serverUrl, secret, plugin } = await chrome.storage.local.get(["serverUrl", "secret", "plugin"]);
-  if (!serverUrl || !secret || !plugin) {
+  const { serverUrl, plugin } = await chrome.storage.local.get(["serverUrl", "plugin"]);
+  const node = (serverUrl || DEFAULT_HOMESERVER).replace(/\/$/, "");
+  if (!plugin) {
     await chrome.storage.local.set({ lastSync: Date.now(), lastSyncOk: false, lastSyncError: "not configured" });
     return { skipped: "not-configured" };
   }
-  const domains = await pluginDomains(serverUrl, plugin);
+  const domains = await pluginDomains(node, plugin);
   await chrome.storage.local.set({ syncDomains: domains }); // cached for cookie-change matching
   const jar = await grabJar(domains);
   const count = Object.keys(jar).length;
@@ -60,9 +81,10 @@ async function syncCookies() {
     await chrome.storage.local.set({ lastSync: Date.now(), lastSyncOk: false, lastSyncError: `no cookies for ${domains.join(",")}`, lastSyncCount: 0 });
     return { skipped: "no-cookies" };
   }
-  const r = await fetch(`${serverUrl}/api/cookies`, {
+  const bearer = await walletBearer(node);
+  const r = await fetch(`${node}/api/cookies`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${secret}` },
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${bearer}` },
     body: JSON.stringify({ plugin, cookies: jar }),
   });
   const ok = r.ok;

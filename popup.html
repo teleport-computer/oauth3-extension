@@ -16,14 +16,15 @@
 </head>
 <body>
   <h1>OAuth3</h1>
+  <div id="ident" style="font-size:11px;color:#888;margin-bottom:8px">this browser is your identity — no sign-in needed</div>
   <label>OAuth3 instance URL</label>
   <input id="serverUrl" placeholder="http://localhost:3000" />
-  <label>Owner secret</label>
-  <input id="secret" type="password" placeholder="OWNER_SECRET" />
   <label>Plugin</label>
   <select id="plugin"></select>
   <details style="margin-top:8px">
-    <summary style="font-size:11px;color:#666;cursor:pointer">Verify instance (federation, optional)</summary>
+    <summary style="font-size:11px;color:#666;cursor:pointer">Advanced (owner secret, federation verify)</summary>
+    <label>Owner secret (optional — admin override)</label>
+    <input id="secret" type="password" placeholder="OWNER_SECRET" />
     <label>Daemon URL</label>
     <input id="daemon" placeholder="https://daemon.example" />
     <label>Project name</label>

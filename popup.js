@@ -45,9 +45,10 @@ async function loadPlugins(serverUrl, selected) {
 }
 
 (async () => {
-  const cfg = await chrome.storage.local.get(["serverUrl", "secret", "plugin", "daemon", "project", "allow", "lastSyncOk", "lastSyncCount", "lastSyncError"]);
+  const cfg = await chrome.storage.local.get(["serverUrl", "secret", "plugin", "daemon", "project", "allow", "lastSyncOk", "lastSyncCount", "lastSyncError", "walletSubject"]);
   $("serverUrl").value = cfg.serverUrl || DEFAULT_HOMESERVER;
   $("secret").value = cfg.secret || "";
+  if (cfg.walletSubject) $("ident").textContent = `wallet identity: ${cfg.walletSubject}`;
   $("daemon").value = cfg.daemon || "";
   $("project").value = cfg.project || "";
   $("allow").value = cfg.allow || "";
