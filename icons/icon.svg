@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="22" fill="#FF9B85"/>
+  <!-- ears -->
+  <path d="M28 38 L40 16 L54 38 Z" fill="#FFF9F0"/>
+  <path d="M100 38 L88 16 L74 38 Z" fill="#FFF9F0"/>
+  <path d="M34 36 L40 24 L48 36 Z" fill="#FF9B85"/>
+  <path d="M94 36 L88 24 L80 36 Z" fill="#FF9B85"/>
+  <!-- face -->
+  <ellipse cx="64" cy="74" rx="40" ry="36" fill="#FFF9F0"/>
+  <!-- sleepy eyes -->
+  <path d="M42 66 Q50 74 58 66" stroke="#4A4A4A" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <path d="M70 66 Q78 74 86 66" stroke="#4A4A4A" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- nose -->
+  <path d="M58 80 L70 80 L64 88 Z" fill="#FF9B85"/>
+  <!-- mouth -->
+  <path d="M64 88 Q58 96 52 92" stroke="#4A4A4A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <path d="M64 88 Q70 96 76 92" stroke="#4A4A4A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+  <!-- whiskers -->
+  <line x1="14" y1="78" x2="36" y2="80" stroke="#4A4A4A" stroke-width="2" stroke-linecap="round"/>
+  <line x1="14" y1="88" x2="36" y2="86" stroke="#4A4A4A" stroke-width="2" stroke-linecap="round"/>
+  <line x1="92" y1="80" x2="114" y2="78" stroke="#4A4A4A" stroke-width="2" stroke-linecap="round"/>
+  <line x1="92" y1="86" x2="114" y2="88" stroke="#4A4A4A" stroke-width="2" stroke-linecap="round"/>
+</svg>
