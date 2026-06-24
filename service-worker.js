@@ -3,6 +3,8 @@
 // demand (popup), on relevant cookie changes (debounced), and on a periodic alarm —
 // so the jar the TEE holds stays fresh for always-on polling.
 
+const DEFAULT_HOMESERVER = "https://915c8197b20b831c52cf97a9fb7e2e104cdc6ae8-8080.dstack-pha-prod7.phala.network/oauth3";
+
 async function pluginDomains(serverUrl, pluginId) {
   const r = await fetch(`${serverUrl}/api/plugins`);
   if (!r.ok) throw new Error(`/api/plugins ${r.status}`);
@@ -10,6 +12,30 @@ async function pluginDomains(serverUrl, pluginId) {
   const p = plugins.find((x) => x.id === pluginId);
   if (!p) throw new Error(`server has no plugin "${pluginId}"`);
   return p.cookieDomains;
+}
+
+// Provider flow (window.oauth3.connect from an app page): copy this site's jar into
+// your room, then connect + approve as the wallet owner, and hand the app a scoped
+// token. The user already consented via the approval dialog (the gesture).
+async function providerConnect(opts) {
+  const { serverUrl, secret } = await chrome.storage.local.get(["serverUrl", "secret"]);
+  const node = (opts?.node || serverUrl || DEFAULT_HOMESERVER).replace(/\/$/, "");
+  if (!secret) return { error: "Open the OAuth3 wallet once and set your key." };
+  const auth = { "Authorization": `Bearer ${secret}`, "Content-Type": "application/json" };
+  const r = await fetch(`${node}/api/plugins`);
+  if (!r.ok) throw new Error(`/api/plugins ${r.status}`);
+  const p = (await r.json()).plugins.find((x) => x.id === opts.plugin);
+  if (!p) return { error: `unknown plugin "${opts.plugin}"` };
+  const jar = {};
+  for (const d of p.cookieDomains) for (const c of await chrome.cookies.getAll({ domain: d })) jar[c.name] = c.value;
+  if (Object.keys(jar).length) {
+    const s = await fetch(`${node}/api/cookies`, { method: "POST", headers: auth, body: JSON.stringify({ plugin: opts.plugin, cookies: jar }) });
+    if (!s.ok) return { error: `cookie sync ${s.status}` };
+  }
+  const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: opts.plugin, app: opts.app, subject: opts.subject }) })).json();
+  await fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" });
+  const st = await (await fetch(`${node}/api/connect/${conn.requestId}`)).json();
+  return st.status === "approved" ? { token: st.token } : { error: "approval failed" };
 }
 
 async function grabJar(domains) {
@@ -48,6 +74,10 @@ async function syncCookies() {
 chrome.runtime.onMessage.addListener((msg, _s, send) => {
   if (msg?.action === "sync-now") {
     syncCookies().then((r) => send({ ok: true, ...r })).catch((e) => send({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+  if (msg?.action === "provider-connect") {
+    providerConnect(msg.opts).then(send).catch((e) => send({ error: String(e.message || e) }));
     return true;
   }
 });

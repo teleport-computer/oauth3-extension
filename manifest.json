@@ -2,11 +2,22 @@
   "manifest_version": 3,
   "name": "OAuth3",
   "version": "0.1.0",
-  "description": "Sync your cookie jar for a site into an OAuth3 instance you trust, so apps get scoped, revocable read access — never your raw cookies.",
+  "description": "Your credential wallet for OAuth3. Apps you visit ask to read a site of yours; you approve once and they get a scoped, revocable token — never your cookies.",
   "permissions": ["cookies", "storage", "alarms"],
   "icons": { "16": "icons/icon-16.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
-  "host_permissions": ["http://localhost/*", "http://127.0.0.1/*"],
+  "host_permissions": [
+    "http://localhost/*", "http://127.0.0.1/*",
+    "https://*.reddit.com/*", "https://reddit.com/*",
+    "https://*.otter.ai/*", "https://otter.ai/*",
+    "https://*.youtube.com/*", "https://*.google.com/*",
+    "https://*.nytimes.com/*", "https://nytimes.com/*",
+    "https://*.phala.network/*"
+  ],
   "optional_host_permissions": ["https://*/*"],
   "background": { "service_worker": "service-worker.js", "type": "module" },
+  "content_scripts": [
+    { "matches": ["<all_urls>"], "js": ["provider-inject.js"], "world": "MAIN", "run_at": "document_start" },
+    { "matches": ["<all_urls>"], "js": ["provider-bridge.js"], "run_at": "document_start" }
+  ],
   "action": { "default_popup": "popup.html", "default_title": "OAuth3" }
 }

@@ -22,6 +22,15 @@
   <input id="secret" type="password" placeholder="OWNER_SECRET" />
   <label>Plugin</label>
   <select id="plugin"></select>
+  <details style="margin-top:8px">
+    <summary style="font-size:11px;color:#666;cursor:pointer">Verify instance (federation, optional)</summary>
+    <label>Daemon URL</label>
+    <input id="daemon" placeholder="https://daemon.example" />
+    <label>Project name</label>
+    <input id="project" placeholder="otter-sync" />
+    <label>Allowed tree hashes (comma-separated)</label>
+    <input id="allow" placeholder="abc123,def456" />
+  </details>
   <button id="save">Save</button>
   <button id="sync">Sync jar now</button>
   <div id="status"></div>
