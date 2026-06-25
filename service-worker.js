@@ -53,7 +53,8 @@ async function providerConnect(opts) {
     if (!s.ok) return { error: `cookie sync ${s.status}` };
   }
   const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: opts.plugin, app: opts.app, subject: opts.subject }) })).json();
-  await fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" });
+  const ap = await fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" });
+  if (!ap.ok) throw new Error(`approve ${ap.status}: ${await ap.text()}`);
   const st = await (await fetch(`${node}/api/connect/${conn.requestId}`)).json();
   return st.status === "approved" ? { token: st.token } : { error: "approval failed" };
 }
