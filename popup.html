@@ -4,11 +4,28 @@
 <meta charset="utf-8" />
 <style>
   body { width: 320px; font-family: system-ui; font-size: 13px; margin: 0; padding: 12px; }
-  h1 { font-size: 15px; margin: 0 0 10px; color: #2255cc; }
+  h1 { font-size: 15px; margin: 0 0 6px; color: #2255cc; }
+  .muted { font-size: 11px; color: #888; }
   label { display: block; font-size: 11px; color: #666; margin: 6px 0 2px; }
   input, select { width: 100%; padding: 5px 6px; border: 1px solid #ddd; border-radius: 5px; font-size: 12px; box-sizing: border-box; }
-  button { width: 100%; padding: 8px; margin-top: 10px; border: none; border-radius: 6px; background: #2255cc; color: #fff; font-size: 13px; cursor: pointer; }
+  button { border: none; border-radius: 6px; background: #2255cc; color: #fff; cursor: pointer; }
   button:hover { background: #1a44aa; }
+  button.small { width: auto; padding: 6px 10px; font-size: 12px; }
+  #syncAll { width: 100%; padding: 8px; margin-top: 10px; font-size: 13px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: 0 0 auto; background: #999; }
+  #instance { display: flex; align-items: center; gap: 7px; margin: 8px 0; padding: 6px 8px; background: #f6f7f9; border-radius: 6px; font-size: 12px; }
+  #jars { display: flex; flex-direction: column; gap: 4px; }
+  .jar { display: flex; align-items: center; gap: 7px; padding: 7px 8px; border: 1px solid #eee; border-radius: 6px; cursor: pointer; }
+  .jar:hover { background: #f6f7f9; }
+  .jar.busy { opacity: .55; }
+  .jname { font-weight: 600; }
+  .jstat { color: #666; font-size: 11px; margin-left: auto; text-align: right; }
+  .jar .x { background: none; color: #bbb; font-size: 13px; padding: 0 2px; margin-left: 4px; }
+  .jar .x:hover { color: #dc2626; background: none; }
+  .add { display: flex; gap: 6px; margin-top: 8px; }
+  .add select { flex: 1; }
+  details { margin-top: 10px; }
+  summary { font-size: 11px; color: #666; cursor: pointer; }
   #status { margin-top: 8px; font-size: 12px; text-align: center; padding: 6px; border-radius: 4px; display: none; }
   #status.ok { display: block; background: #dcfce7; color: #166534; }
   #status.err { display: block; background: #fee2e2; color: #991b1b; }
@@ -16,13 +33,24 @@
 </head>
 <body>
   <h1>OAuth3</h1>
-  <div id="ident" style="font-size:11px;color:#888;margin-bottom:8px">this browser is your identity — no sign-in needed</div>
-  <label>OAuth3 instance URL</label>
-  <input id="serverUrl" placeholder="http://localhost:3000" />
-  <label>Plugin</label>
-  <select id="plugin"></select>
-  <details style="margin-top:8px">
-    <summary style="font-size:11px;color:#666;cursor:pointer">Advanced (owner secret, federation verify)</summary>
+  <div id="ident" class="muted">this browser is your identity — no sign-in needed</div>
+
+  <div id="instance"><span class="dot" id="instDot"></span><span id="instText">checking…</span></div>
+
+  <div id="jars"></div>
+  <div id="empty" class="muted" hidden>No jars yet — add a site below to keep it synced into your instance.</div>
+
+  <div class="add">
+    <select id="addPlugin"></select>
+    <button id="addBtn" class="small">+ Add jar</button>
+  </div>
+
+  <button id="syncAll">Sync all now</button>
+
+  <details>
+    <summary>Advanced (instance URL, owner secret, federation verify)</summary>
+    <label>OAuth3 instance URL</label>
+    <input id="serverUrl" placeholder="http://localhost:3000" />
     <label>Owner secret (optional — admin override)</label>
     <input id="secret" type="password" placeholder="OWNER_SECRET" />
     <label>Daemon URL</label>
@@ -31,9 +59,9 @@
     <input id="project" placeholder="otter-sync" />
     <label>Allowed tree hashes (comma-separated)</label>
     <input id="allow" placeholder="abc123,def456" />
+    <button id="saveAdv" class="small" style="margin-top:8px">Save</button>
   </details>
-  <button id="save">Save</button>
-  <button id="sync">Sync jar now</button>
+
   <div id="status"></div>
   <script src="popup.js"></script>
 </body>

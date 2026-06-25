@@ -1,0 +1,49 @@
+# Two containers on the host network: the real oauth3-server (Deno) and a
+# Playwright runner with the unpacked extension injected into Chromium. Host
+# network so the extension can reach the server on localhost (a secure origin).
+# Linux only.
+
+services:
+  otter-mock:
+    image: denoland/deno:latest
+    user: root
+    network_mode: host
+    volumes:
+      - ./otter-mock.ts:/mock.ts:ro
+    environment:
+      PORT: "8077"
+    command: ["run", "--allow-net", "--allow-env", "/mock.ts"]
+
+  server:
+    image: denoland/deno:latest
+    user: root
+    network_mode: host
+    working_dir: /srv
+    depends_on:
+      - otter-mock
+    volumes:
+      - ../../oauth3-server:/srv:ro
+    environment:
+      PORT: "3100"
+      DATA_DIR: /tmp/data
+      # Throwaway seal/owner secrets for the test — never reuse.
+      SEAL_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      OWNER_SECRET: "e2e-owner-secret"
+      POLL_INTERVAL_MIN: "9999"
+      # Otter reads hit the local fixture server instead of live otter.ai.
+      OTTER_BASE: "http://localhost:8077"
+    command: ["run", "--allow-net", "--allow-read", "--allow-write", "--allow-env", "server/main.ts"]
+
+  e2e:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    depends_on:
+      - server
+    environment:
+      SERVER_URL: http://localhost:3100
+      EXT_PATH: /ext
+    volumes:
+      - ..:/ext:ro
+      - ./report:/app/playwright-report

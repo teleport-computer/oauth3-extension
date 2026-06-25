@@ -66,36 +66,65 @@ async function grabJar(domains) {
   return jar;
 }
 
-async function syncCookies() {
-  const { serverUrl, plugin } = await chrome.storage.local.get(["serverUrl", "plugin"]);
-  const node = (serverUrl || DEFAULT_HOMESERVER).replace(/\/$/, "");
-  if (!plugin) {
-    await chrome.storage.local.set({ lastSync: Date.now(), lastSyncOk: false, lastSyncError: "not configured" });
-    return { skipped: "not-configured" };
-  }
+// State is per-jar now: storage.jars = { [pluginId]: { lastSync, ok, count, error } },
+// storage.jarDomains = { [pluginId]: [domain,...] } (cached for cookie-change matching).
+// A "jar" is a site the user added to keep fresh — no single selected plugin.
+async function syncOne(node, plugin) {
   const domains = await pluginDomains(node, plugin);
-  await chrome.storage.local.set({ syncDomains: domains }); // cached for cookie-change matching
   const jar = await grabJar(domains);
   const count = Object.keys(jar).length;
-  if (!count) {
-    await chrome.storage.local.set({ lastSync: Date.now(), lastSyncOk: false, lastSyncError: `no cookies for ${domains.join(",")}`, lastSyncCount: 0 });
-    return { skipped: "no-cookies" };
+  let ok = false, error = "";
+  if (!count) error = `no cookies for ${domains.join(",")}`;
+  else {
+    const bearer = await walletBearer(node);
+    const r = await fetch(`${node}/api/cookies`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${bearer}` },
+      body: JSON.stringify({ plugin, cookies: jar }),
+    });
+    ok = r.ok;
+    error = ok ? "" : `${r.status} ${(await r.text().catch(() => "")).slice(0, 100)}`;
   }
-  const bearer = await walletBearer(node);
-  const r = await fetch(`${node}/api/cookies`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${bearer}` },
-    body: JSON.stringify({ plugin, cookies: jar }),
-  });
-  const ok = r.ok;
-  const err = ok ? "" : `${r.status} ${(await r.text().catch(() => "")).slice(0, 100)}`;
-  await chrome.storage.local.set({ lastSync: Date.now(), lastSyncOk: ok, lastSyncCount: count, lastSyncError: err, lastSyncPlugin: plugin });
-  return { ok, status: r.status, count };
+  const { jars = {}, jarDomains = {} } = await chrome.storage.local.get(["jars", "jarDomains"]);
+  jars[plugin] = { lastSync: Date.now(), ok, count, error };
+  jarDomains[plugin] = domains;
+  await chrome.storage.local.set({ jars, jarDomains });
+  return { plugin, ok, count, error };
 }
+
+async function syncAll() {
+  const { serverUrl, jars = {} } = await chrome.storage.local.get(["serverUrl", "jars"]);
+  const node = (serverUrl || DEFAULT_HOMESERVER).replace(/\/$/, "");
+  const out = [];
+  for (const id of Object.keys(jars)) out.push(await syncOne(node, id).catch((e) => ({ plugin: id, ok: false, error: String(e.message || e) })));
+  return out;
+}
+
+const nodeOf = async () => ((await chrome.storage.local.get("serverUrl")).serverUrl || DEFAULT_HOMESERVER).replace(/\/$/, "");
 
 chrome.runtime.onMessage.addListener((msg, _s, send) => {
   if (msg?.action === "sync-now") {
-    syncCookies().then((r) => send({ ok: true, ...r })).catch((e) => send({ ok: false, error: String(e.message || e) }));
+    syncAll().then((results) => send({ ok: true, results })).catch((e) => send({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+  if (msg?.action === "sync-plugin") {
+    nodeOf().then((n) => syncOne(n, msg.plugin)).then((r) => send({ ok: true, ...r })).catch((e) => send({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+  if (msg?.action === "add-jar") {
+    (async () => {
+      const { jars = {} } = await chrome.storage.local.get("jars");
+      if (!jars[msg.plugin]) { jars[msg.plugin] = { lastSync: 0 }; await chrome.storage.local.set({ jars }); }
+      return syncOne(await nodeOf(), msg.plugin);
+    })().then((r) => send({ ok: true, ...r })).catch((e) => send({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+  if (msg?.action === "remove-jar") {
+    (async () => {
+      const { jars = {}, jarDomains = {} } = await chrome.storage.local.get(["jars", "jarDomains"]);
+      delete jars[msg.plugin]; delete jarDomains[msg.plugin];
+      await chrome.storage.local.set({ jars, jarDomains });
+    })().then(() => send({ ok: true })).catch((e) => send({ ok: false, error: String(e.message || e) }));
     return true;
   }
   if (msg?.action === "provider-connect") {
@@ -107,17 +136,17 @@ chrome.runtime.onMessage.addListener((msg, _s, send) => {
 // --- Auto-sync: keep the TEE's jar fresh ---
 
 const RESYNC_ALARM = "resync";
-chrome.runtime.onInstalled.addListener(() => { chrome.alarms.create(RESYNC_ALARM, { periodInMinutes: 30 }); syncCookies().catch((e) => console.warn("[autosync]", e.message || e)); });
-chrome.runtime.onStartup.addListener(() => syncCookies().catch((e) => console.warn("[autosync]", e.message || e)));
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === RESYNC_ALARM) syncCookies().catch((e) => console.warn("[autosync]", e.message || e)); });
+const autoAll = () => syncAll().catch((e) => console.warn("[autosync]", e.message || e));
+chrome.runtime.onInstalled.addListener(() => { chrome.alarms.create(RESYNC_ALARM, { periodInMinutes: 30 }); autoAll(); });
+chrome.runtime.onStartup.addListener(autoAll);
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === RESYNC_ALARM) autoAll(); });
 
 let debounce;
 chrome.cookies.onChanged.addListener(async ({ cookie }) => {
-  const { syncDomains } = await chrome.storage.local.get("syncDomains");
-  if (!syncDomains?.length) return;
+  const { jarDomains = {} } = await chrome.storage.local.get("jarDomains");
   const cd = cookie.domain.replace(/^\./, "");
-  const match = syncDomains.some((d) => { const dd = d.replace(/^\./, ""); return cd === dd || cd.endsWith("." + dd); });
-  if (!match) return;
+  const hit = Object.keys(jarDomains).filter((pid) => jarDomains[pid].some((d) => { const dd = d.replace(/^\./, ""); return cd === dd || cd.endsWith("." + dd); }));
+  if (!hit.length) return;
   clearTimeout(debounce);
-  debounce = setTimeout(() => syncCookies().catch((e) => console.warn("[autosync]", e.message || e)), 1000);
+  debounce = setTimeout(async () => { const n = await nodeOf(); for (const pid of hit) syncOne(n, pid).catch((e) => console.warn("[autosync]", e.message || e)); }, 1000);
 });
