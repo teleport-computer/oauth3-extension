@@ -86,6 +86,15 @@ $("jars").addEventListener("click", async (e) => {
     chrome.permissions.remove({ origins: originsFor(id) }); // best-effort cleanup
     return render();
   }
+  // Re-affirm per-site consent on manual sync: request() resolves true with no
+  // prompt when the grant still holds, and re-shows the "Allow OAuth3 to read
+  // <site> cookies?" prompt if the user revoked it (e.g. via Chrome's site
+  // settings). Must stay the first await — Chrome consumes the click gesture on
+  // any prior await and would otherwise throw "outside a user gesture".
+  const origins = originsFor(id);
+  if (origins.length && !(await chrome.permissions.request({ origins }))) {
+    status(`host permission needed to read ${labelFor(id)} cookies`, false); return;
+  }
   row.classList.add("busy");
   try {
     const r = await call({ action: "sync-plugin", plugin: id });

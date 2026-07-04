@@ -15,9 +15,13 @@ It does one thing. No content scripts, no scraping, no dashboards — just
    Load unpacked).
 2. Open the popup. The top row shows whether your instance is reachable; your
    browser is your identity, so there's no sign-in. **Add a jar** for each site
-   you want kept fresh (Otter, Reddit, …) — each appears as a row with a
-   freshness dot (green fresh / amber stale / red error). Instance URL override
-   and owner secret live under **Advanced**; the default homeserver is built in.
+   you want kept fresh (Otter, Reddit, …) — the first time you add a site, Chrome
+   asks you to approve OAuth3 reading that site's cookies (**per-site, never
+   all-sites**) and only then does the harvest run. Each jar appears as a row with
+   a freshness dot (green fresh / amber stale / red error); revoking a site's
+   permission (Chrome's site settings, or removing the jar) stops all harvest for
+   it immediately. Instance URL override and owner secret live under **Advanced**;
+   the default homeserver is built in.
 3. After a jar is added it auto-syncs: on relevant cookie changes (debounced) and
    every 30 minutes, so the instance's jar stays fresh for always-on polling.
 

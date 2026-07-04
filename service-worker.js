@@ -46,6 +46,12 @@ async function providerConnect(opts) {
   if (!r.ok) throw new Error(`/api/plugins ${r.status}`);
   const p = (await r.json()).plugins.find((x) => x.id === opts.plugin);
   if (!p) return { error: `unknown plugin "${opts.plugin}"` };
+  // The page's approval dialog consents to the connect, but cookies are still
+  // readable only for a site the user has added + granted in the popup. Refuse
+  // (don't silently hand the app an empty jar) if the per-site grant is missing.
+  if (!(await hasConsent(p.cookieDomains))) {
+    return { error: `site "${opts.plugin}" not approved — add it in the OAuth3 popup first` };
+  }
   // One retry on a stale cached wallet session (same as syncOne; never for an owner-secret
   // bearer — a wrong secret in Settings should surface as the 401, not silently retry).
   // Without this, every app connect() bricks with "cookie sync 401" after a node redeploy.
@@ -79,11 +85,39 @@ async function grabJar(domains) {
   return jar;
 }
 
+// Host-permission patterns for a plugin's cookie domains — mirrors the popup's
+// originsFor(). chrome.cookies.getAll returns nothing for a domain unless the
+// extension holds host permission for it, so consent == holding the grant.
+const originsForDomains = (domains) =>
+  domains.flatMap((d) => { const h = d.replace(/^\./, ""); return [`https://${h}/*`, `https://*.${h}/*`]; });
+
+// Per-site consent gate. The grant is acquired in the popup's "Add jar" flow
+// (chrome.permissions.request — the user gesture is the click). Revoking it (via
+// Chrome's site permissions or removing the jar) makes this resolve false, and
+// every harvest path (manual, onInstalled, onStartup, the 30-min alarm, cookie
+// change) refuses to read a single cookie until it's re-granted.
+async function hasConsent(domains) {
+  const origins = originsForDomains(domains);
+  if (!origins.length) return false;
+  return chrome.permissions.contains({ origins });
+}
+
 // State is per-jar now: storage.jars = { [pluginId]: { lastSync, ok, count, error } },
 // storage.jarDomains = { [pluginId]: [domain,...] } (cached for cookie-change matching).
 // A "jar" is a site the user added to keep fresh — no single selected plugin.
 async function syncOne(node, plugin) {
   const domains = await pluginDomains(node, plugin);
+  // Consent gate: never harvest a site the user hasn't granted host permission
+  // for. Without this, onInstalled / onStartup / the 30-min alarm / cookie-change
+  // would silently re-harvest any persisted jar — including sites the user never
+  // approved or has since revoked. Mark it "awaiting your approval" instead.
+  if (!(await hasConsent(domains))) {
+    const { jars = {}, jarDomains = {} } = await chrome.storage.local.get(["jars", "jarDomains"]);
+    jars[plugin] = { lastSync: Date.now(), ok: false, count: 0, error: "awaiting your approval" };
+    jarDomains[plugin] = domains;
+    await chrome.storage.local.set({ jars, jarDomains });
+    return { plugin, ok: false, count: 0, error: "awaiting your approval" };
+  }
   const jar = await grabJar(domains);
   const count = Object.keys(jar).length;
   let ok = false, error = "";
