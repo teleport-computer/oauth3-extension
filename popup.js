@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const status = (msg, ok) => { const s = $("status"); s.textContent = msg; s.className = ok ? "ok" : "err"; };
+const status = (msg, ok) => { const s = $("status"); s.textContent = msg; s.className = ok ? "note" : "note bad"; };
 // A stale/old service worker won't answer new message types → sendMessage resolves
 // undefined. Surface that instead of a cryptic "reading 'ok' of undefined".
 async function call(msg) {
@@ -27,11 +27,12 @@ const ago = (ts) => { if (!ts) return "never"; const s = Math.floor((Date.now() 
   return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`; };
 
 const FRESH_MS = 35 * 60 * 1000; // auto-resync is every 30m; past that a jar is stale
+// Freshness maps to design-system pill states (ok/warn/bad); "" = neutral pending.
 function health(j) {
-  if (!j || !j.lastSync) return ["#999", "syncing…"];
-  if (!j.ok) return ["#dc2626", j.error || "sync failed"];
-  if (Date.now() - j.lastSync > FRESH_MS) return ["#d97706", `stale · ${j.count} cookies · ${ago(j.lastSync)}`];
-  return ["#16a34a", `${j.count} cookies · ${ago(j.lastSync)}`];
+  if (!j || !j.lastSync) return ["", "syncing…"];
+  if (!j.ok) return ["bad", j.error || "sync failed"];
+  if (Date.now() - j.lastSync > FRESH_MS) return ["warn", `stale · ${j.count} · ${ago(j.lastSync)}`];
+  return ["ok", `${j.count} · ${ago(j.lastSync)}`];
 }
 
 // Federation pin: trust the code measurement, not the operator. If a daemon/project/
@@ -61,14 +62,15 @@ async function loadPlugins() {
 async function render() {
   const { jars = {} } = await chrome.storage.local.get("jars");
   let host = ""; try { host = new URL(node()).host; } catch { /* shown as empty */ }
-  $("instDot").style.background = REACHABLE ? "#16a34a" : "#dc2626";
+  $("instDot").className = "dot " + (REACHABLE ? "ok" : "bad");
   $("instText").textContent = REACHABLE ? `instance reachable — ${host}` : `can't reach instance — ${host}`;
 
   const ids = Object.keys(jars);
   $("empty").hidden = ids.length > 0;
-  $("jars").innerHTML = ids.map((id) => { const [color, text] = health(jars[id]);
-    return `<div class="jar" data-plugin="${id}"><span class="dot" style="background:${color}"></span>` +
-      `<span class="jname">${labelFor(id)}</span><span class="jstat">${text}</span>` +
+  $("jars").innerHTML = ids.map((id) => { const [state, text] = health(jars[id]);
+    return `<div class="jar" data-plugin="${id}">` +
+      `<span class="jname">${labelFor(id)}</span>` +
+      `<span class="jstat"><span class="pill ${state}">${text}</span></span>` +
       `<button class="x" title="remove">✕</button></div>`; }).join("");
 
   const avail = PLUGINS.filter((p) => !ids.includes(p.id));
