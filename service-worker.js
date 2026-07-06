@@ -46,14 +46,26 @@ async function providerConnect(opts) {
   if (!r.ok) throw new Error(`/api/plugins ${r.status}`);
   const p = (await r.json()).plugins.find((x) => x.id === opts.plugin);
   if (!p) return { error: `unknown plugin "${opts.plugin}"` };
+  // One retry on a stale cached wallet session (same as syncOne; never for an owner-secret
+  // bearer — a wrong secret in Settings should surface as the 401, not silently retry).
+  // Without this, every app connect() bricks with "cookie sync 401" after a node redeploy.
+  const authRetry = async (doFetch) => {
+    let r = await doFetch();
+    if (r.status === 401 && !(await chrome.storage.local.get("secret")).secret) {
+      await chrome.storage.local.remove(`walletSession:${node}`);
+      auth.Authorization = `Bearer ${await walletBearer(node)}`;
+      r = await doFetch();
+    }
+    return r;
+  };
   const jar = {};
   for (const d of p.cookieDomains) for (const c of await chrome.cookies.getAll({ domain: d })) jar[c.name] = c.value;
   if (Object.keys(jar).length) {
-    const s = await fetch(`${node}/api/cookies`, { method: "POST", headers: auth, body: JSON.stringify({ plugin: opts.plugin, cookies: jar }) });
+    const s = await authRetry(() => fetch(`${node}/api/cookies`, { method: "POST", headers: auth, body: JSON.stringify({ plugin: opts.plugin, cookies: jar }) }));
     if (!s.ok) return { error: `cookie sync ${s.status}` };
   }
   const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: opts.plugin, app: opts.app, subject: opts.subject }) })).json();
-  const ap = await fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" });
+  const ap = await authRetry(() => fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" }));
   if (!ap.ok) throw new Error(`approve ${ap.status}: ${await ap.text()}`);
   const st = await (await fetch(`${node}/api/connect/${conn.requestId}`)).json();
   return st.status === "approved" ? { token: st.token } : { error: "approval failed" };
