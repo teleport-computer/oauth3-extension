@@ -52,7 +52,12 @@ async function providerConnect(opts) {
     const s = await fetch(`${node}/api/cookies`, { method: "POST", headers: auth, body: JSON.stringify({ plugin: opts.plugin, cookies: jar }) });
     if (!s.ok) return { error: `cookie sync ${s.status}` };
   }
-  const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: opts.plugin, app: opts.app, subject: opts.subject }) })).json();
+  // Forward opts.caps so the minted token actually carries the requested scope.
+  // The server threads body.caps -> approveConnect -> mint(plugin, subject, app, caps);
+  // omitting it here (the bug) mints an unrestricted token that sails past the
+  // scope gate. JSON.stringify drops `caps` when undefined, so no-caps callers
+  // are unaffected.
+  const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: opts.plugin, app: opts.app, subject: opts.subject, caps: opts.caps }) })).json();
   const ap = await fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" });
   if (!ap.ok) throw new Error(`approve ${ap.status}: ${await ap.text()}`);
   const st = await (await fetch(`${node}/api/connect/${conn.requestId}`)).json();

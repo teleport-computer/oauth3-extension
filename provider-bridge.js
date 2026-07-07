@@ -17,11 +17,27 @@ window.addEventListener("message", async (e) => {
   }
 });
 
+// opts (app/plugin/caps) are page-supplied, so anything interpolated into the
+// shadow-DOM innerHTML must be escaped — a cap like "<img src=x onerror=...>" is
+// otherwise a self-XSS. Raw cap identifiers are shown as-is (the server holds the
+// human-readable labels and exposes no pre-approval catalogue endpoint), which is
+// still a strict improvement over the old generic "read your <plugin>" copy that
+// hid the requested scope entirely.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
 function approvalDialog(opts) {
   return new Promise((resolve) => {
     const wrap = document.createElement("div");
     wrap.id = "oauth3-approve";
     const sr = wrap.attachShadow({ mode: "open" });
+    const app = escapeHtml(opts.app || "An app");
+    const plugin = escapeHtml(opts.plugin || "this site");
+    const caps = Array.isArray(opts.caps) ? opts.caps.map((c) => escapeHtml(c)).filter(Boolean) : [];
+    const capsHtml = caps.length
+      ? `<p style="margin:-8px 0 6px">Limited to:</p><ul style="margin:0 0 16px;padding-left:20px;color:#444">${caps.map((c) => `<li><b>${c}</b></li>`).join("")}</ul>`
+      : "";
     sr.innerHTML = `
       <style>
         .bk{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center}
@@ -32,7 +48,8 @@ function approvalDialog(opts) {
       </style>
       <div class=bk><div class=card>
         <h3>Authorize access</h3>
-        <p><b>${(opts.app || "An app")}</b> wants to read your <b>${opts.plugin}</b> — with a scoped, revocable token, never your cookies.</p>
+        <p><b>${app}</b> wants to read your <b>${plugin}</b> — with a scoped, revocable token, never your cookies.</p>
+        ${capsHtml}
         <div class=row><button class=go>Connect</button><button class=no>Cancel</button></div>
       </div></div>`;
     document.documentElement.appendChild(wrap);
