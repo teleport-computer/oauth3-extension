@@ -19,10 +19,14 @@ window.addEventListener("message", async (e) => {
 
 // opts (app/plugin/caps) are page-supplied, so anything interpolated into the
 // shadow-DOM innerHTML must be escaped — a cap like "<img src=x onerror=...>" is
-// otherwise a self-XSS. Raw cap identifiers are shown as-is (the server holds the
-// human-readable labels and exposes no pre-approval catalogue endpoint), which is
-// still a strict improvement over the old generic "read your <plugin>" copy that
-// hid the requested scope entirely.
+// otherwise a self-XSS. When the page requested specific caps we lead with them
+// (the ingredient the user is actually approving) and drop the generic
+// "read your <plugin>" copy that hid the requested scope (#9: the dialog shows
+// the otter:live-follow ingredient, not a generic "read your otter"). The server
+// holds the human-readable cap labels but exposes no pre-approval catalogue
+// endpoint (probed /api/caps, /api/plugins/:id/caps, /approve/:id — none render
+// them), so the actual requested cap identifier is shown; a server-side caps
+// catalogue is the remaining piece to mirror the prose label without drift.
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
@@ -35,9 +39,11 @@ function approvalDialog(opts) {
     const app = escapeHtml(opts.app || "An app");
     const plugin = escapeHtml(opts.plugin || "this site");
     const caps = Array.isArray(opts.caps) ? opts.caps.map((c) => escapeHtml(c)).filter(Boolean) : [];
-    const capsHtml = caps.length
-      ? `<p style="margin:-8px 0 6px">Limited to:</p><ul style="margin:0 0 16px;padding-left:20px;color:#444">${caps.map((c) => `<li><b>${c}</b></li>`).join("")}</ul>`
-      : "";
+    // Caps present → the scope IS the ingredient; lead with it and drop the
+    // generic "read your <plugin>" lead. Absent → fall back to that copy.
+    const body = caps.length
+      ? `<p style="margin:0 0 6px"><b>${app}</b> wants a scoped, revocable token for <b>${plugin}</b>, limited to:</p><ul style="margin:0 0 12px;padding-left:20px;color:#444">${caps.map((c) => `<li><b>${c}</b></li>`).join("")}</ul><p style="margin:0 0 16px">Never your cookies.</p>`
+      : `<p><b>${app}</b> wants to read your <b>${plugin}</b> — with a scoped, revocable token, never your cookies.</p>`;
     sr.innerHTML = `
       <style>
         .bk{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center}
@@ -48,8 +54,7 @@ function approvalDialog(opts) {
       </style>
       <div class=bk><div class=card>
         <h3>Authorize access</h3>
-        <p><b>${app}</b> wants to read your <b>${plugin}</b> — with a scoped, revocable token, never your cookies.</p>
-        ${capsHtml}
+        ${body}
         <div class=row><button class=go>Connect</button><button class=no>Cancel</button></div>
       </div></div>`;
     document.documentElement.appendChild(wrap);

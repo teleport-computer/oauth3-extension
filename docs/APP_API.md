@@ -39,6 +39,7 @@ The single entry point. Asks the wallet to authorize your app to read one plugin
 const token = await window.oauth3.connect({
   plugin: "otter",   // required — the plugin id (e.g. "otter", "reddit")
   app: "my-otter",   // optional — your app id; bound into the minted token
+  caps: ["otter:live-follow"], // optional — scope ingredients; gate the minted token
   node: undefined,   // optional — override the homeserver URL
   subject: undefined // optional — wallet subject passed through to /api/connect
 });
@@ -51,6 +52,7 @@ const token = await window.oauth3.connect({
 | `app` | `string?` | Your app id. Recorded against the token so the user can see *which app* has access and revoke just that one. |
 | `node` | `string?` | Homeserver URL. Defaults to the wallet's configured instance (`serverUrl` in the popup, else the built-in default). |
 | `subject` | `string?` | Wallet subject forwarded to `POST /api/connect`. Usually omitted — the wallet fills its own `u-<hash>` subject. |
+| `caps` | `string[]?` | Scope **ingredients** to bind into the minted token, e.g. `["otter:live-follow"]`. Forwarded to `POST /api/connect` and threaded into the mint, so the homeserver's read-scope gate enforces them: a `live-follow` token may read `/live`+`/frame` but is rejected (`403 scope`) on `/items`. Omit for the plugin's default (full) read surface. When `caps` are passed the approval dialog leads with them so the user sees the actual requested scope, not a generic "read your `<plugin>`". |
 
 **Returns:** a `Promise` that resolves to the token `string`.
 
@@ -97,6 +99,27 @@ child of a host element with `id="oauth3-approve"`:
   root, so it can't clash with your page's CSS.
 - z-index is `2147483647` so it sits over everything. There is exactly one dialog
   per `connect()` call; it removes itself on either button.
+
+When you pass `caps`, the dialog leads with the requested ingredient and drops
+the generic "read your `<plugin>`" copy:
+
+```text
+┌─────────────────────────────────────────────┐
+│ Authorize access                              │
+│ <app> wants a scoped, revocable token for     │
+│ <plugin>, limited to:                          │
+│ • <cap>                                         │
+│ Never your cookies.                            │
+│              [ Connect ]   [ Cancel ]          │
+└─────────────────────────────────────────────┘
+```
+
+The cap identifier (e.g. `otter:live-follow`) is shown as-is: the homeserver
+holds the human-readable ingredient labels (returned in a gated read's `403
+scope` field) and exposes no pre-approval catalogue endpoint, so the extension
+shows the actual scope you requested rather than a prose it would have to guess.
+A server-side `GET /api/caps/:plugin` is the remaining piece to mirror the prose
+label without client-side drift.
 
 You don't drive this dialog from your page — just `await connect()`. If you need
 to know it's showing (e.g. to pause a tour), check for the `#oauth3-approve`
