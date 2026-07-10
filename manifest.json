@@ -7,13 +7,15 @@
   "icons": { "16": "icons/icon-16.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
   "host_permissions": [
     "http://localhost/*", "http://127.0.0.1/*",
-    "https://*.reddit.com/*", "https://reddit.com/*",
-    "https://*.otter.ai/*", "https://otter.ai/*",
-    "https://*.youtube.com/*", "https://*.google.com/*",
-    "https://*.nytimes.com/*", "https://nytimes.com/*",
     "https://*.phala.network/*"
   ],
-  "optional_host_permissions": ["https://*/*"],
+  "optional_host_permissions": [
+    "https://reddit.com/*", "https://*.reddit.com/*",
+    "https://otter.ai/*", "https://*.otter.ai/*",
+    "https://youtube.com/*", "https://*.youtube.com/*",
+    "https://google.com/*", "https://*.google.com/*",
+    "https://nytimes.com/*", "https://*.nytimes.com/*"
+  ],
   "background": { "service_worker": "service-worker.js", "type": "module" },
   "content_scripts": [
     { "matches": ["<all_urls>"], "js": ["provider-inject.js"], "world": "MAIN", "run_at": "document_start" },
