@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — OAuth3 extension</title>
+<meta name="description" content="The OAuth3 extension couriers your cookies to an instance you choose, and nowhere else.">
+<style>
+  :root{--teal:#00838a;--teal-ink:#025b60;--pink:#ff48b0;--ink:#161314;
+    --paper:#fbf7f0;--card:#fff;--line:#e7ddcd;--muted:#5c5550;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:16px/1.65 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:720px;margin:0 auto;padding:0 22px}
+  a{color:var(--teal-ink)}
+  header{padding:44px 0 8px}
+  .back{font-size:14px;text-decoration:none;color:var(--teal-ink)}
+  h1{font-size:clamp(26px,5vw,34px);margin:14px 0 4px;letter-spacing:-.02em}
+  h1:after{content:"";display:block;width:56px;height:4px;border-radius:3px;
+    background:linear-gradient(90deg,var(--teal),var(--pink));margin-top:12px}
+  .eff{color:var(--muted);font-size:14px;margin:0 0 8px}
+  h2{font-size:19px;margin:34px 0 10px;letter-spacing:-.01em}
+  p{margin:0 0 12px}
+  code{background:#f0e9dc;border-radius:5px;padding:1px 6px;font-size:.92em}
+  table{width:100%;border-collapse:collapse;margin:8px 0 16px;font-size:14.5px;background:var(--card)}
+  th,td{text-align:left;border:1px solid var(--line);padding:9px 11px;vertical-align:top}
+  th{background:#f4ede0;color:var(--teal-ink);font-weight:600}
+  ul{margin:0 0 12px;padding-left:20px}
+  li{margin:4px 0}
+  footer{margin:48px 0 60px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <a class="back" href="index.html">← OAuth3 extension</a>
+  <h1>Privacy Policy</h1>
+  <p class="eff"><strong>Effective date:</strong> 2026-07-04</p>
+</header>
+
+<p>The OAuth3 extension is an open-source tool. Its data flow is fully determined by the source
+published at <a href="https://github.com/teleport-computer/oauth3-extension">github.com/teleport-computer/oauth3-extension</a>
+under an MIT license, which you can audit in full.</p>
+
+<h2>What the extension does with your data</h2>
+<p>The extension is a <strong>cookie-jar courier</strong>. For each site you explicitly add, it reads
+that site's session cookies from your own browser and sends them, over HTTPS, to the <strong>one
+OAuth3 instance URL you configure</strong>. It does not send your data anywhere else.</p>
+<table>
+  <tr><th>Data</th><th>Where it goes</th><th>Why</th></tr>
+  <tr><td>Session cookies for sites you add</td><td>The one instance URL you configure</td><td>So your instance can act on your behalf at those sites and mint scoped tokens for apps</td></tr>
+  <tr><td>Your list of added sites + freshness</td><td>Local <code>chrome.storage.local</code> on your device</td><td>So the popup shows your jars</td></tr>
+  <tr><td>Your configured instance URL</td><td>Local <code>chrome.storage.local</code> on your device</td><td>So the extension knows where to sync</td></tr>
+  <tr><td>The owner secret you paste</td><td>Local <code>chrome.storage.local</code> on your device</td><td>Authenticates cookie uploads to your instance</td></tr>
+</table>
+<p>The extension does not collect, store, or transmit any other personal information. It does not use
+analytics. It does not communicate with any third-party service other than the instance URL you provide.</p>
+
+<h2>Your instance, and the default one</h2>
+<p>You choose which OAuth3 instance the extension talks to. Out of the box it points at a default
+instance (<code>pod.dstack.soc1024.com/oauth3</code>), the way a Matrix client defaults to matrix.org —
+a starting point you can change under Advanced.</p>
+<p>The default instance runs inside a Trusted Execution Environment (TEE). Its code identity is
+<strong>remotely attestable</strong>, meaning you can cryptographically verify which published code is
+handling your cookies rather than take it on trust. If you run your own instance, your cookies go only
+to infrastructure you operate.</p>
+<p>Once your cookies are at your instance, that instance answers apps' requests with a <strong>scoped,
+revocable token</strong> — the app receives a token limited to what you approved, not your cookies, and
+you can revoke it at any time.</p>
+
+<h2>Permissions the extension requests, and why</h2>
+<table>
+  <tr><th>Permission</th><th>Why</th></tr>
+  <tr><td><code>cookies</code></td><td>Read your session cookies for the sites you explicitly add</td></tr>
+  <tr><td><code>storage</code></td><td>Save your added sites, instance URL, and upload secret locally on your device</td></tr>
+  <tr><td><code>alarms</code></td><td>Re-sync cookies every 30 minutes so your instance's session stays fresh</td></tr>
+  <tr><td><code>activeTab</code></td><td>Read only the active tab's URL, so the popup can offer "add a jar for this site"</td></tr>
+  <tr><td><code>host_permissions: pod.dstack.soc1024.com</code></td><td>Talk to the built-in default instance (learn a site's cookie needs; upload the jar)</td></tr>
+  <tr><td><code>optional_host_permissions: https://*/*</code></td><td>Read a site you add, or reach a custom instance URL you enter — granted at runtime, only for that exact origin</td></tr>
+</table>
+<p>Each site you add prompts your browser, at that moment, for permission to read only that site's
+cookies. Nothing is read until you approve it.</p>
+
+<h2>What it does not do</h2>
+<ul>
+  <li>No central OAuth3 account and no central collection — the extension talks only to the instance URL you set.</li>
+  <li>No third-party analytics, telemetry, or tracking.</li>
+  <li>Does not sell or share your data — it never receives your data centrally; the courier path is browser → your instance only.</li>
+  <li>No advertising.</li>
+  <li>Does not transmit browsing history beyond the per-site cookie sync described above.</li>
+</ul>
+
+<h2>Data retention and deletion</h2>
+<ul>
+  <li><strong>Local browser storage</strong> (added sites, instance URL, secret) — clear by uninstalling the extension or via Chrome's clear-storage flow.</li>
+  <li><strong>Your instance</strong> — the cookie jars live on the instance you configured; delete them there (or shut the instance down). For the default TEE instance, revoke via its dashboard.</li>
+</ul>
+
+<h2>Open source and verifiability</h2>
+<p>Full source is at <a href="https://github.com/teleport-computer/oauth3-extension">github.com/teleport-computer/oauth3-extension</a>
+under the MIT license. Tagged releases are intended to match the version distributed via the Chrome Web
+Store. The default instance's behavior is additionally verifiable via TEE remote attestation.</p>
+
+<h2>Contact</h2>
+<p>Questions, security reports, or privacy concerns: file an issue at
+<a href="https://github.com/teleport-computer/oauth3-extension/issues">github.com/teleport-computer/oauth3-extension/issues</a>.</p>
+
+<h2>Changes to this policy</h2>
+<p>If this policy changes, the updated version is published at this URL and the effective date above is
+updated. The change history is visible in the git history of <code>docs/privacy.md</code> in the repository.</p>
+
+<footer>
+  OAuth3 extension · <a href="index.html">Home</a> · <a href="https://github.com/teleport-computer/oauth3-extension">GitHub</a>
+</footer>
+</div>
+</body>
+</html>
