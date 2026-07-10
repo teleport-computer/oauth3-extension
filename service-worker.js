@@ -139,6 +139,29 @@ chrome.runtime.onMessage.addListener((msg, _s, send) => {
   }
 });
 
+// Intent-gated completion of an explicit "Add jar" click. Requesting a host permission opens
+// Chrome's permission dialog, which steals focus and closes the popup — killing the in-popup
+// await before the jar is read/synced. permissions.onAdded fires in the (persistent) service
+// worker instead. It completes ONLY the plugin the user explicitly clicked Add for (pendingAdd),
+// and only when the granted origins actually cover that plugin's cookie domains. A host grant
+// obtained any other way (per-site injection consent, activeTab, etc.) has no pendingAdd and
+// therefore shares NOTHING — granting host access is never treated as intent to share a jar.
+chrome.permissions.onAdded.addListener((perms) => {
+  (async () => {
+    const { pendingAdd } = await chrome.storage.local.get("pendingAdd");
+    if (!pendingAdd) return; // no explicit Add in flight → do not sync anything
+    const node = await nodeOf();
+    const domains = await pluginDomains(node, pendingAdd).catch(() => []);
+    const origins = perms.origins || [];
+    const covered = domains.some((d) => { const h = d.replace(/^\./, ""); return origins.some((o) => o.includes(h)); });
+    if (!covered) return; // the grant isn't for this plugin's domains
+    const { jars = {} } = await chrome.storage.local.get("jars");
+    if (!jars[pendingAdd]) { jars[pendingAdd] = { lastSync: 0 }; await chrome.storage.local.set({ jars }); }
+    await syncOne(node, pendingAdd);
+    await chrome.storage.local.remove("pendingAdd");
+  })().catch((e) => console.warn("[onAdded]", e.message || e));
+});
+
 // --- Auto-sync: keep the TEE's jar fresh ---
 
 const RESYNC_ALARM = "resync";

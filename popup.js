@@ -102,11 +102,18 @@ $("addBtn").addEventListener("click", async () => {
     // permissions.request MUST be the first await — Chrome consumes the click
     // gesture on any prior await, then throws "may only be called during a user gesture".
     const origins = originsFor(id);
+    // Record the EXPLICIT add intent before prompting (fire-and-forget so the click gesture
+    // isn't consumed). If the permission dialog steals focus and closes this popup mid-await,
+    // the SW's permissions.onAdded completes THIS sync — and only this one. A host grant that
+    // happens any other way (no pendingAdd) shares nothing.
+    if (origins.length) chrome.storage.local.set({ pendingAdd: id });
     if (origins.length && !(await chrome.permissions.request({ origins }))) {
+      chrome.storage.local.remove("pendingAdd");
       status(`host permission needed to read ${labelFor(id)} cookies`, false); return;
     }
     if (!(await ensureTrusted())) return;
     const r = await call({ action: "add-jar", plugin: id });
+    chrome.storage.local.remove("pendingAdd");
     status(r.ok ? `${labelFor(id)}: ${r.error || `${r.count} cookies`}` : (r.error || "add failed"), r.ok && !r.error);
     await render();
   } catch (e) { status(String(e.message || e), false); }
