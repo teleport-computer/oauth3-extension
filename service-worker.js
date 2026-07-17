@@ -8,11 +8,10 @@ const DEFAULT_HOMESERVER = "https://915c8197b20b831c52cf97a9fb7e2e104cdc6ae8-808
 // The wallet's identity. Default: a random userKey kept in extension storage (the
 // localStorage analog) → a per-user subject on the homeserver. No passkey, no owner
 // secret imposed. An owner secret, if set in the popup, overrides for admin use.
-// The session is cached and reused (sessions persist on the node's data volume).
-async function walletBearer(node) {
-  const { secret, walletSession } = await chrome.storage.local.get(["secret", "walletSession"]);
-  if (secret) return secret;
-  if (walletSession) return walletSession;
+// The session is cached and reused (sessions persist on the node's data volume). If the
+// node rotates/wipes sessions (e.g. a redeploy), the cached session goes stale — callers
+// recover via walletLogin() on a 401 rather than dead-ending (see providerConnect).
+async function walletLogin(node) {
   let { userKey } = await chrome.storage.local.get("userKey");
   if (!userKey) {
     userKey = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
@@ -23,6 +22,12 @@ async function walletBearer(node) {
   const { session, subject } = await r.json();
   await chrome.storage.local.set({ walletSession: session, walletSubject: subject });
   return session;
+}
+async function walletBearer(node) {
+  const { secret, walletSession } = await chrome.storage.local.get(["secret", "walletSession"]);
+  if (secret) return secret;
+  if (walletSession) return walletSession;
+  return walletLogin(node);
 }
 
 async function pluginDomains(serverUrl, pluginId) {
@@ -40,28 +45,36 @@ async function pluginDomains(serverUrl, pluginId) {
 async function providerConnect(opts) {
   const { serverUrl } = await chrome.storage.local.get(["serverUrl"]);
   const node = (opts?.node || serverUrl || DEFAULT_HOMESERVER).replace(/\/$/, "");
-  const bearer = await walletBearer(node);
-  const auth = { "Authorization": `Bearer ${bearer}`, "Content-Type": "application/json" };
   const r = await fetch(`${node}/api/plugins`);
   if (!r.ok) throw new Error(`/api/plugins ${r.status}`);
   const p = (await r.json()).plugins.find((x) => x.id === opts.plugin);
   if (!p) return { error: `unknown plugin "${opts.plugin}"` };
   const jar = {};
   for (const d of p.cookieDomains) for (const c of await chrome.cookies.getAll({ domain: d })) jar[c.name] = c.value;
-  if (Object.keys(jar).length) {
-    const s = await fetch(`${node}/api/cookies`, { method: "POST", headers: auth, body: JSON.stringify({ plugin: opts.plugin, cookies: jar }) });
-    if (!s.ok) return { error: `cookie sync ${s.status}` };
-  }
-  // Forward opts.caps so the minted token actually carries the requested scope.
-  // The server threads body.caps -> approveConnect -> mint(plugin, subject, app, caps);
-  // omitting it here (the bug) mints an unrestricted token that sails past the
-  // scope gate. JSON.stringify drops `caps` when undefined, so no-caps callers
-  // are unaffected.
-  const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: opts.plugin, app: opts.app, subject: opts.subject, caps: opts.caps }) })).json();
-  const ap = await fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" });
-  if (!ap.ok) throw new Error(`approve ${ap.status}: ${await ap.text()}`);
-  const st = await (await fetch(`${node}/api/connect/${conn.requestId}`)).json();
-  return st.status === "approved" ? { token: st.token } : { error: "approval failed" };
+
+  // The authed handshake: jar sync -> connect -> approve. A 401 on any authed call means the
+  // cached wallet session was rotated/wiped server-side (e.g. a node redeploy) — recover by
+  // re-logging-in ONCE and retrying, instead of dead-ending at "sign in to approve". `caps` is
+  // forwarded so the minted token carries the requested scope (server threads it through
+  // approveConnect -> mint); JSON.stringify drops it when undefined, so no-caps callers are fine.
+  const attempt = async (bearer) => {
+    const auth = { "Authorization": `Bearer ${bearer}`, "Content-Type": "application/json" };
+    if (Object.keys(jar).length) {
+      const s = await fetch(`${node}/api/cookies`, { method: "POST", headers: auth, body: JSON.stringify({ plugin: opts.plugin, cookies: jar }) });
+      if (s.status === 401) return { stale: true };
+      if (!s.ok) return { error: `cookie sync ${s.status}` };
+    }
+    const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: opts.plugin, app: opts.app, subject: opts.subject, caps: opts.caps }) })).json();
+    const ap = await fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" });
+    if (ap.status === 401) return { stale: true };
+    if (!ap.ok) throw new Error(`approve ${ap.status}: ${await ap.text()}`);
+    const st = await (await fetch(`${node}/api/connect/${conn.requestId}`)).json();
+    return st.status === "approved" ? { token: st.token } : { error: "approval failed" };
+  };
+  let out = await attempt(await walletBearer(node));
+  if (out.stale) out = await attempt(await walletLogin(node)); // session rotated -> re-auth once
+  if (out.stale) throw new Error("wallet could not authenticate after re-login");
+  return out;
 }
 
 async function grabJar(domains) {
