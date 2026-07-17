@@ -58,7 +58,9 @@ async function providerConnect(opts) {
   const authRetry = async (doFetch) => {
     let r = await doFetch();
     if (r.status === 401 && !(await chrome.storage.local.get("secret")).secret) {
-      await chrome.storage.local.remove(`walletSession:${node}`);
+      // walletBearer caches under the unkeyed "walletSession" key — clear THAT one (not a
+      // per-node key) so the retry actually re-logs-in instead of reusing the stale session.
+      await chrome.storage.local.remove("walletSession");
       auth.Authorization = `Bearer ${await walletBearer(node)}`;
       r = await doFetch();
     }
