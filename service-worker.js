@@ -9,10 +9,21 @@ const DEFAULT_HOMESERVER = "https://915c8197b20b831c52cf97a9fb7e2e104cdc6ae8-808
 // localStorage analog) → a per-user subject on the homeserver. No passkey, no owner
 // secret imposed. An owner secret, if set in the popup, overrides for admin use.
 // The session is cached and reused (sessions persist on the node's data volume).
+const walletSessionKey = (node) => node.replace(/\/+$/, "");
+
 async function walletBearer(node) {
-  const { secret, walletSession } = await chrome.storage.local.get(["secret", "walletSession"]);
+  const key = walletSessionKey(node);
+  const { secret, walletSessions = {}, walletSession, walletSubject } = await chrome.storage.local.get(["secret", "walletSessions", "walletSession", "walletSubject"]);
   if (secret) return secret;
-  if (walletSession) return walletSession;
+  if (walletSessions[key]) return walletSessions[key];
+  if (walletSession) {
+    // A pre-node-key version has no way to identify its node. Use it once for the
+    // current node, then remove the ambiguous value so the next node logs in.
+    walletSessions[key] = walletSession;
+    await chrome.storage.local.set({ walletSessions, walletSubject });
+    await chrome.storage.local.remove(["walletSession"]);
+    return walletSession;
+  }
   let { userKey } = await chrome.storage.local.get("userKey");
   if (!userKey) {
     userKey = crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
@@ -21,8 +32,26 @@ async function walletBearer(node) {
   const r = await fetch(`${node}/api/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userKey }) });
   if (!r.ok) throw new Error(`wallet login ${r.status}`);
   const { session, subject } = await r.json();
-  await chrome.storage.local.set({ walletSession: session, walletSubject: subject });
+  walletSessions[key] = session;
+  await chrome.storage.local.set({ walletSessions, walletSubject: subject });
   return session;
+}
+
+async function clearWalletSession(node) {
+  const walletSessions = (await chrome.storage.local.get("walletSessions")).walletSessions || {};
+  delete walletSessions[walletSessionKey(node)];
+  await chrome.storage.local.set({ walletSessions });
+  await chrome.storage.local.remove(["walletSession"]);
+}
+
+async function authRetry(node, auth, doFetch) {
+  let r = await doFetch();
+  if (r.status === 401 && !(await chrome.storage.local.get("secret")).secret) {
+    await clearWalletSession(node);
+    auth.Authorization = `Bearer ${await walletBearer(node)}`;
+    r = await doFetch();
+  }
+  return r;
 }
 
 async function pluginDomains(serverUrl, pluginId) {
@@ -49,7 +78,7 @@ async function providerConnect(opts) {
   const jar = {};
   for (const d of p.cookieDomains) for (const c of await chrome.cookies.getAll({ domain: d })) jar[c.name] = c.value;
   if (Object.keys(jar).length) {
-    const s = await fetch(`${node}/api/cookies`, { method: "POST", headers: auth, body: JSON.stringify({ plugin: opts.plugin, cookies: jar }) });
+    const s = await authRetry(node, auth, () => fetch(`${node}/api/cookies`, { method: "POST", headers: auth, body: JSON.stringify({ plugin: opts.plugin, cookies: jar }) }));
     if (!s.ok) return { error: `cookie sync ${s.status}` };
   }
   // Forward opts.caps so the minted token actually carries the requested scope.
@@ -65,7 +94,11 @@ async function providerConnect(opts) {
   const connBody = { plugin: opts.plugin, app: opts.app, subject: opts.subject, caps: opts.caps };
   if (opts.account) connBody.account = opts.account;
   const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(connBody) })).json();
-  const ap = await fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" });
+  // #18: approve goes through authRetry so a stale (per-node) session refreshes
+  // its own bearer instead of replaying another node's — 401 recovery is retained
+  // for connect approval. A 409 (account needed) is not a 401, so the retry above
+  // never touches the needAccount path below.
+  const ap = await authRetry(node, auth, () => fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" }));
   // #14: multiple accounts synced for this plugin and none named → hand the list
   // back to the page so the user picks one. The page re-runs connect with account.
   if (ap.status === 409) {
@@ -98,11 +131,12 @@ async function syncOne(node, plugin) {
   if (!count) error = `no cookies for ${domains.join(",")}`;
   else {
     const bearer = await walletBearer(node);
-    const r = await fetch(`${node}/api/cookies`, {
+    const auth = { "Content-Type": "application/json", "Authorization": `Bearer ${bearer}` };
+    const r = await authRetry(node, auth, () => fetch(`${node}/api/cookies`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${bearer}` },
+      headers: auth,
       body: JSON.stringify({ plugin, cookies: jar }),
-    });
+    }));
     ok = r.ok;
     if (ok) {
       // #14: the server derives the account from the jar (e.g. twitter twid → numeric
