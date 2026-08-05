@@ -57,8 +57,23 @@ async function providerConnect(opts) {
   // omitting it here (the bug) mints an unrestricted token that sails past the
   // scope gate. JSON.stringify drops `caps` when undefined, so no-caps callers
   // are unaffected.
-  const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plugin: opts.plugin, app: opts.app, subject: opts.subject, caps: opts.caps }) })).json();
+  //
+  // #14: also forward opts.account. The server keys jars (subject, plugin, account);
+  // if the wallet holds several accounts for this plugin and none is named, the
+  // approve step 409s with the available accounts. We surface that to the page
+  // (provider-bridge shows a picker) and the page re-calls with `account` set.
+  const connBody = { plugin: opts.plugin, app: opts.app, subject: opts.subject, caps: opts.caps };
+  if (opts.account) connBody.account = opts.account;
+  const conn = await (await fetch(`${node}/api/connect`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(connBody) })).json();
   const ap = await fetch(`${node}/api/connect/${conn.requestId}/approve`, { method: "POST", headers: auth, body: "{}" });
+  // #14: multiple accounts synced for this plugin and none named → hand the list
+  // back to the page so the user picks one. The page re-runs connect with account.
+  if (ap.status === 409) {
+    const body = await ap.json().catch(() => ({}));
+    if (Array.isArray(body?.accounts) && body.accounts.length) {
+      return { needAccount: true, accounts: body.accounts, plugin: opts.plugin };
+    }
+  }
   if (!ap.ok) throw new Error(`approve ${ap.status}: ${await ap.text()}`);
   const st = await (await fetch(`${node}/api/connect/${conn.requestId}`)).json();
   return st.status === "approved" ? { token: st.token } : { error: "approval failed" };
@@ -79,7 +94,7 @@ async function syncOne(node, plugin) {
   const domains = await pluginDomains(node, plugin);
   const jar = await grabJar(domains);
   const count = Object.keys(jar).length;
-  let ok = false, error = "";
+  let ok = false, error = "", account;
   if (!count) error = `no cookies for ${domains.join(",")}`;
   else {
     const bearer = await walletBearer(node);
@@ -89,13 +104,21 @@ async function syncOne(node, plugin) {
       body: JSON.stringify({ plugin, cookies: jar }),
     });
     ok = r.ok;
-    error = ok ? "" : `${r.status} ${(await r.text().catch(() => "")).slice(0, 100)}`;
+    if (ok) {
+      // #14: the server derives the account from the jar (e.g. twitter twid → numeric
+      // id) and returns it. Surface it in the UI so a second account is visible, not
+      // a silent overwrite.
+      const body = await r.json().catch(() => ({}));
+      account = body?.account;
+    } else {
+      error = `${r.status} ${(await r.text().catch(() => "")).slice(0, 100)}`;
+    }
   }
   const { jars = {}, jarDomains = {} } = await chrome.storage.local.get(["jars", "jarDomains"]);
-  jars[plugin] = { lastSync: Date.now(), ok, count, error };
+  jars[plugin] = { lastSync: Date.now(), ok, count, error, account };
   jarDomains[plugin] = domains;
   await chrome.storage.local.set({ jars, jarDomains });
-  return { plugin, ok, count, error };
+  return { plugin, ok, count, error, account };
 }
 
 async function syncAll() {

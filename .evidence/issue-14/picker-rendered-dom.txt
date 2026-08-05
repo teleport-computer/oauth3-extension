@@ -1,0 +1,4 @@
+Rendered accountPicker (live, via envoy bridge evaluate) — UNMODIFIED
+provider-bridge.js accountPicker("twitter",["111","222"]):
+
+{"present":true,"title":"Choose an account","prompt":"Which twitter account should this app use?","accounts":["111","222"],"cancelPresent":true}

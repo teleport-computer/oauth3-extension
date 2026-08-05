@@ -35,6 +35,16 @@ function health(j) {
   return ["ok", `${j.count} · ${ago(j.lastSync)}`];
 }
 
+// #14: a plugin may now hold several account-qualified jars. The server is the source
+// of truth — GET /api/plugins returns jars: [{account, updatedAt, count}] — so render
+// one pill per account instead of a single present/absent badge. pill state from the
+// jar's updatedAt (auto-resync keeps it fresh); a jar with no updatedAt isn't synced yet.
+function jarHealth(j) {
+  if (!j || !j.updatedAt) return ["", j?.account ? `${j.account} · pending` : "no jar"];
+  const stale = Date.now() - j.updatedAt > FRESH_MS;
+  return [stale ? "warn" : "ok", `${j.account} · ${j.count} · ${ago(j.updatedAt)}`];
+}
+
 // Federation pin: trust the code measurement, not the operator. If a daemon/project/
 // allowlist is configured, check the recorded tree_hash before syncing anything.
 async function verifyInstance(daemon, project, allow) {
@@ -55,7 +65,12 @@ async function ensureTrusted() {
 }
 
 async function loadPlugins() {
-  try { PLUGINS = (await (await fetch(`${node()}/api/plugins`)).json()).plugins; REACHABLE = true; }
+  // #14: jar status is per-identity — the server returns jars: [] for an anonymous
+  // caller. Authenticate with the wallet session (cached on first sync) so the
+  // subject's account-qualified jars actually come back.
+  const { walletSession, secret } = await chrome.storage.local.get(["walletSession", "secret"]);
+  const headers = secret ? { Authorization: `Bearer ${secret}` } : walletSession ? { Authorization: `Bearer ${walletSession}` } : {};
+  try { PLUGINS = (await (await fetch(`${node()}/api/plugins`, { headers })).json()).plugins; REACHABLE = true; }
   catch { PLUGINS = []; REACHABLE = false; }
 }
 
@@ -67,11 +82,18 @@ async function render() {
 
   const ids = Object.keys(jars);
   $("empty").hidden = ids.length > 0;
-  $("jars").innerHTML = ids.map((id) => { const [state, text] = health(jars[id]);
+  $("jars").innerHTML = ids.map((id) => {
+    const serverJars = PLUGINS.find((p) => p.id === id)?.jars || [];
+    // #14: one pill per account the server holds for this plugin. When the server
+    // lists none yet (never synced, or wallet not authed), fall back to the local
+    // subscription state so the row still reports the last sync / error.
+    const acct = serverJars.length
+      ? serverJars.map((j) => { const [st, txt] = jarHealth(j); return `<span class="pill ${st}">${txt}</span>`; }).join("")
+      : `<span class="pill ${health(jars[id])[0]}">${health(jars[id])[1]}</span>`;
     return `<div class="jar" data-plugin="${id}">` +
-      `<span class="jname">${labelFor(id)}</span>` +
-      `<span class="jstat"><span class="pill ${state}">${text}</span></span>` +
-      `<button class="x" title="remove">✕</button></div>`; }).join("");
+      `<div class="jhead"><span class="jname">${labelFor(id)}</span><button class="x" title="remove">✕</button></div>` +
+      `<div class="jstat">${acct}</div></div>`;
+  }).join("");
 
   const avail = PLUGINS.filter((p) => !ids.includes(p.id));
   $("addPlugin").innerHTML = avail.length
@@ -91,8 +113,11 @@ $("jars").addEventListener("click", async (e) => {
   row.classList.add("busy");
   try {
     const r = await call({ action: "sync-plugin", plugin: id });
+    // #14: name the account the jar was stored under (from the sync response).
     if (!r.ok) status(r.error || "sync failed", false);
+    else status(`${labelFor(id)}: account ${r.account ?? "default"} · ${r.count} cookies`, true);
   } catch (e) { status(String(e.message || e), false); }
+  await loadPlugins(); // #14: re-fetch so the new account-qualified jar renders.
   await render();
 });
 
@@ -107,7 +132,9 @@ $("addBtn").addEventListener("click", async () => {
     }
     if (!(await ensureTrusted())) return;
     const r = await call({ action: "add-jar", plugin: id });
-    status(r.ok ? `${labelFor(id)}: ${r.error || `${r.count} cookies`}` : (r.error || "add failed"), r.ok && !r.error);
+    // #14: surface the account the jar landed under, not just the cookie count.
+    status(r.ok ? `${labelFor(id)}: account ${r.account ?? "default"} · ${r.error || `${r.count} cookies`}` : (r.error || "add failed"), r.ok && !r.error);
+    await loadPlugins();
     await render();
   } catch (e) { status(String(e.message || e), false); }
 });
@@ -120,6 +147,7 @@ $("syncAll").addEventListener("click", async () => {
     if (!r.ok) status(r.error || "sync failed", false);
   } catch (e) { status(String(e.message || e), false); }
   $("syncAll").disabled = false; $("syncAll").textContent = "Sync all now";
+  await loadPlugins(); // #14: re-fetch so account-qualified jars reflect the sync.
   await render();
 });
 

@@ -122,7 +122,7 @@ summary { font: 500 11px var(--mono); letter-spacing: .12em; text-transform: low
 <body>
   <div class="wrap">
     <header>
-      <span class="wordmark"><img src="icons/icon-48.png" alt="" /><span>oauth<b>3</b></span></span>
+      <span class="wordmark"><img src="/icons/icon-48.png" alt="" /><span>oauth<b>3</b></span></span>
       <span class="meta">credential wallet</span>
     </header>
 
@@ -157,6 +157,25 @@ summary { font: 500 11px var(--mono); letter-spacing: .12em; text-transform: low
 
     <div id="status"></div>
   </div>
-  <script src="popup.js"></script>
+  <script>
+// HARNESS STUB: renders the UNMODIFIED popup.js against REAL server data.
+// chrome.* is stubbed (render-time only); fetch('/api/plugins') is intercepted to
+// return the live local-server response captured below (a plain browser page would
+// otherwise hit a CORS preflight on the Authorization header; the real extension
+// page has host permissions and is not subject to CORS).
+const __CFG = {"serverUrl": "http://localhost:14714", "walletSession": "sess-96e9d4266b234deda1e259f8a03302fae9e8f747e9624103976dfee2b07b7d6e", "walletSubject": "u-7526c4b5aa90a36588ade1d9dcbba44a", "jars": {"twitter": {"lastSync": 0}, "amazon": {"lastSync": 0}}, "secret": "", "daemon": "", "project": "", "allow": ""};
+const __PLUGINS = {"plugins":[{"id":"otter","label":"Otter","cookieDomains":[".otter.ai"],"account":false,"jars":[]},{"id":"youtube","label":"YouTube history","cookieDomains":[".youtube.com"],"account":false,"jars":[]},{"id":"reddit","label":"Reddit (saved + karma)","cookieDomains":[".reddit.com"],"account":true,"jars":[]},{"id":"nytimes","label":"NYTimes saved (browser-path)","cookieDomains":[".nytimes.com"],"account":false,"jars":[]},{"id":"twitter","label":"Twitter / X timeline (browser-path)","cookieDomains":[".x.com"],"account":false,"jars":[{"account":"111","updatedAt":1785957396211,"count":3},{"account":"222","updatedAt":1785957396218,"count":3}]},{"id":"google-calendar","label":"Google Calendar","cookieDomains":[".google.com",".calendar.google.com"],"account":false,"jars":[]},{"id":"amazon","label":"Amazon (cart)","cookieDomains":[".amazon.com"],"account":false,"jars":[{"account":"default","updatedAt":1785957396224,"count":2}]},{"id":"hackernews","label":"Hacker News (upvoted + karma)","cookieDomains":["news.ycombinator.com"],"account":true,"jars":[]}]};
+window.chrome = {
+  storage: { local: { get: async (keys) => { const w = Array.isArray(keys)?keys:(keys?[keys]:[]); const o={}; for (const k of w) if (k in __CFG) o[k]=__CFG[k]; return o; }, set: async()=>{} } },
+  runtime: { sendMessage: async()=>({}), onMessage: { addListener(){} } },
+  permissions: { remove: async()=>{}, request: async()=>true },
+};
+const __origFetch = window.fetch;
+window.fetch = async (url, opts) => {
+  if (String(url).includes('/api/plugins')) return new Response(JSON.stringify(__PLUGINS), {status:200, headers:{'content-type':'application/json','access-control-allow-origin':'*'}});
+  return __origFetch(url, opts);
+};
+</script>
+<script src="/popup.js"></script>
 </body>
 </html>

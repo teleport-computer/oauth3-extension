@@ -1,0 +1,4 @@
+Rendered #jars (live, via envoy bridge evaluate) — UNMODIFIED popup.js against the
+real /api/plugins jars[] from the local oauth3 server:
+
+{"jarsOuter":"<div id=\"jars\"><div class=\"jar\" data-plugin=\"twitter\"><div class=\"jhead\"><span class=\"jname\">Twitter / X timeline (browser-path)</span><button class=\"x\" title=\"remove\">✕</button></div><div class=\"jstat\"><span class=\"pill ok\">111 · 3 · 7m ago</span><span class=\"pill ok\">222 · 3 · 7m ago</span></div></div><div class=\"jar\" data-plugin=\"amazon\"><div class=\"jhead\"><span class=\"jname\">Amazon (cart)</span><button class=\"x\" title=\"remove\">✕</button></div><div class=\"jstat\"><span class=\"pill ok\">default · 2 · 7m ago</span></div></div></div>","pills":["pill ok :: 111 · 3 · 7m ago","pill ok :: 222 · 3 · 7m ago","pill ok :: default · 2 · 7m ago"],"instText":"instance reachable — localhost:14714","emptyHidden":true}
