@@ -85,11 +85,13 @@ header .meta { font: 500 10px/1.2 var(--mono); letter-spacing: .14em; text-trans
 #instText { min-width: 0; }
 
 #jars { display: flex; flex-direction: column; gap: 6px; }
-.jar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--card); border: 1.5px solid var(--rule); cursor: pointer; }
+.jar { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--card); border: 1.5px solid var(--rule); cursor: pointer; }
 .jar:hover { background: var(--wash1); }
 .jar.busy { opacity: .5; }
+.jhead { display: flex; align-items: center; justify-content: space-between; }
 .jname { font-weight: 700; color: var(--text); }
-.jstat { margin-left: auto; display: inline-flex; justify-content: flex-end; }
+.jstat { display: flex; flex-wrap: wrap; gap: 4px; }
+.jstat .pill { font-size: 11px; padding: 3px 8px; }
 /* a bare .pill (no ok/warn/bad) is the neutral pending state — token-derived, not hex */
 .pill { background: var(--rule); color: var(--faint); }
 .jar .x { border: 0; background: transparent; color: var(--faint); cursor: pointer; font: 600 13px var(--sans); padding: 0 2px; }
