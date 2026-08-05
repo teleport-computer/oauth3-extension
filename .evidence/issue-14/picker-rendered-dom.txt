@@ -1,4 +1,18 @@
-Rendered accountPicker (live, via envoy bridge evaluate) — UNMODIFIED
-provider-bridge.js accountPicker("twitter",["111","222"]):
+Rendered accountPicker (LIVE in the rig browser) — UNMODIFIED shipped provider-bridge.js
+(PR #20), accountPicker("twitter", ["111","222"]). The accounts are the REAL twitter jars
+staging holds for the wallet (see GET /api/plugins in contract-transcript.md: twitter
+jars [{account:"111"},{account:"222"}], which is the set the server's 409-with-accounts
+returns). See pb-harness.html and 02-picker.png.
 
-{"present":true,"title":"Choose an account","prompt":"Which twitter account should this app use?","accounts":["111","222"],"cancelPresent":true}
+picker shadow-DOM (verbatim from bridge evaluate):
+{"success":true,"result":{"title":"Choose an account","prompt":"Which twitter account should this app use?","accounts":["111","222"],"present":true}}
+
+Cancel button present: true.
+
+Picker RESOLVES on click (closes the AC2 loop on the extension side):
+  click account "222" (button.acct[1]) -> accountPicker resolves with "222", dialog removed.
+  {"clicked":"222"} then {"picked":"222","pickerGone":true,"stage":"picked:222"}
+
+=> AC2 extension side (picker renders on the 409-with-accounts surface and resolves with
+   the chosen account). The server side of AC2 (POST /api/connect with account -> approve
+   200 -> token) is in contract-transcript.md.

@@ -122,7 +122,7 @@ summary { font: 500 11px var(--mono); letter-spacing: .12em; text-transform: low
 <body>
   <div class="wrap">
     <header>
-      <span class="wordmark"><img src="/icons/icon-48.png" alt="" /><span>oauth<b>3</b></span></span>
+      <span class="wordmark"><img src="icons/icon-48.png" alt="" /><span>oauth<b>3</b></span></span>
       <span class="meta">credential wallet</span>
     </header>
 
@@ -158,24 +158,204 @@ summary { font: 500 11px var(--mono); letter-spacing: .12em; text-transform: low
     <div id="status"></div>
   </div>
   <script>
-// HARNESS STUB: renders the UNMODIFIED popup.js against REAL server data.
-// chrome.* is stubbed (render-time only); fetch('/api/plugins') is intercepted to
-// return the live local-server response captured below (a plain browser page would
-// otherwise hit a CORS preflight on the Authorization header; the real extension
-// page has host permissions and is not subject to CORS).
-const __CFG = {"serverUrl": "http://localhost:14714", "walletSession": "sess-96e9d4266b234deda1e259f8a03302fae9e8f747e9624103976dfee2b07b7d6e", "walletSubject": "u-7526c4b5aa90a36588ade1d9dcbba44a", "jars": {"twitter": {"lastSync": 0}, "amazon": {"lastSync": 0}}, "secret": "", "daemon": "", "project": "", "allow": ""};
-const __PLUGINS = {"plugins":[{"id":"otter","label":"Otter","cookieDomains":[".otter.ai"],"account":false,"jars":[]},{"id":"youtube","label":"YouTube history","cookieDomains":[".youtube.com"],"account":false,"jars":[]},{"id":"reddit","label":"Reddit (saved + karma)","cookieDomains":[".reddit.com"],"account":true,"jars":[]},{"id":"nytimes","label":"NYTimes saved (browser-path)","cookieDomains":[".nytimes.com"],"account":false,"jars":[]},{"id":"twitter","label":"Twitter / X timeline (browser-path)","cookieDomains":[".x.com"],"account":false,"jars":[{"account":"111","updatedAt":1785957396211,"count":3},{"account":"222","updatedAt":1785957396218,"count":3}]},{"id":"google-calendar","label":"Google Calendar","cookieDomains":[".google.com",".calendar.google.com"],"account":false,"jars":[]},{"id":"amazon","label":"Amazon (cart)","cookieDomains":[".amazon.com"],"account":false,"jars":[{"account":"default","updatedAt":1785957396224,"count":2}]},{"id":"hackernews","label":"Hacker News (upvoted + karma)","cookieDomains":["news.ycombinator.com"],"account":true,"jars":[]}]};
-window.chrome = {
-  storage: { local: { get: async (keys) => { const w = Array.isArray(keys)?keys:(keys?[keys]:[]); const o={}; for (const k of w) if (k in __CFG) o[k]=__CFG[k]; return o; }, set: async()=>{} } },
-  runtime: { sendMessage: async()=>({}), onMessage: { addListener(){} } },
-  permissions: { remove: async()=>{}, request: async()=>true },
+// HARNESS (committed template): renders the UNMODIFIED shipped popup.js (PR #20)
+// against the DEPLOYED staging oauth3 node, LIVE — no fetch shim. Staging sends
+// `Access-Control-Allow-Origin: *` and allows the `Authorization` header, so a normal
+// page CAN read /api/plugins with the wallet Bearer (the real toolbar popup is browser
+// chrome that captureVisibleTab cannot grab, so the rig renders popup.js at its shipped
+// 320px width instead). chrome.* is stubbed (render-time only); the jars subscription
+// list is pre-seeded to twitter+amazon.
+//
+// The walletSession is REDACTED here — it is a real staging credential and must not be
+// committed to a public repo. To reproduce: POST <serverUrl>/api/login {userKey} with
+// the u-swarm userKey (~/.paseo-secrets/swarm-userkey), then put the returned `session`
+// into __CFG.walletSession and load this page in the rig browser.
+const __CFG = {
+  serverUrl: "https://78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network/oauth3",
+  walletSession: "<redacted — POST /api/login with the u-swarm userKey, see comment above>",
+  walletSubject: "u-eaf13541f186c7c5f466dc04e2e5da4b",
+  secret: "", daemon: "", project: "", allow: "",
+  jars: { twitter: { lastSync: 0 }, amazon: { lastSync: 0 } }
 };
-const __origFetch = window.fetch;
-window.fetch = async (url, opts) => {
-  if (String(url).includes('/api/plugins')) return new Response(JSON.stringify(__PLUGINS), {status:200, headers:{'content-type':'application/json','access-control-allow-origin':'*'}});
-  return __origFetch(url, opts);
+window.chrome = {
+  storage: { local: { get: async (k) => { const keys = Array.isArray(k)?k:(k?[k]:[]); const o={}; for(const x of keys) if(x in __CFG) o[x]=__CFG[x]; return o; }, set: async()=>{} } },
+  runtime: { sendMessage: async()=>({}), onMessage: { addListener(){} }, id: "rig-harness" },
+  permissions: { remove: async()=>{}, request: async()=>true }
 };
 </script>
-<script src="/popup.js"></script>
+<script>
+// === inlined popup.js (PR #20, verbatim) ===
+const $ = (id) => document.getElementById(id);
+const status = (msg, ok) => { const s = $("status"); s.textContent = msg; s.className = ok ? "note" : "note bad"; };
+// A stale/old service worker won't answer new message types → sendMessage resolves
+// undefined. Surface that instead of a cryptic "reading 'ok' of undefined".
+async function call(msg) {
+  const r = await chrome.runtime.sendMessage(msg);
+  if (!r) throw new Error("no reply from service worker — reload the extension at chrome://extensions");
+  return r;
+}
+
+// Default homeserver (the matrix.org-equivalent) — so the instance URL is NOT
+// something you paste. Override only in Advanced if self-hosting.
+const DEFAULT_HOMESERVER = "https://915c8197b20b831c52cf97a9fb7e2e104cdc6ae8-8080.dstack-pha-prod7.phala.network/oauth3";
+
+let PLUGINS = [];        // from /api/plugins
+let REACHABLE = false;
+
+const node = () => ($("serverUrl").value || DEFAULT_HOMESERVER).replace(/\/$/, "");
+const labelFor = (id) => PLUGINS.find((p) => p.id === id)?.label || id;
+// chrome.cookies only returns cookies for sites the extension has host access to,
+// so a jar needs host permission for its cookie domains. Need both apex and
+// wildcard: "*.otter.ai" does NOT match "otter.ai".
+const originsFor = (id) => (PLUGINS.find((p) => p.id === id)?.cookieDomains || [])
+  .flatMap((d) => { const h = d.replace(/^\./, ""); return [`https://${h}/*`, `https://*.${h}/*`]; });
+
+const ago = (ts) => { if (!ts) return "never"; const s = Math.floor((Date.now() - ts) / 1000);
+  return s < 60 ? `${s}s ago` : s < 3600 ? `${Math.floor(s / 60)}m ago` : s < 86400 ? `${Math.floor(s / 3600)}h ago` : `${Math.floor(s / 86400)}d ago`; };
+
+const FRESH_MS = 35 * 60 * 1000; // auto-resync is every 30m; past that a jar is stale
+// Freshness maps to design-system pill states (ok/warn/bad); "" = neutral pending.
+function health(j) {
+  if (!j || !j.lastSync) return ["", "syncing…"];
+  if (!j.ok) return ["bad", j.error || "sync failed"];
+  if (Date.now() - j.lastSync > FRESH_MS) return ["warn", `stale · ${j.count} · ${ago(j.lastSync)}`];
+  return ["ok", `${j.count} · ${ago(j.lastSync)}`];
+}
+
+// #14: a plugin may now hold several account-qualified jars. The server is the source
+// of truth — GET /api/plugins returns jars: [{account, updatedAt, count}] — so render
+// one pill per account instead of a single present/absent badge. pill state from the
+// jar's updatedAt (auto-resync keeps it fresh); a jar with no updatedAt isn't synced yet.
+function jarHealth(j) {
+  if (!j || !j.updatedAt) return ["", j?.account ? `${j.account} · pending` : "no jar"];
+  const stale = Date.now() - j.updatedAt > FRESH_MS;
+  return [stale ? "warn" : "ok", `${j.account} · ${j.count} · ${ago(j.updatedAt)}`];
+}
+
+// Federation pin: trust the code measurement, not the operator. If a daemon/project/
+// allowlist is configured, check the recorded tree_hash before syncing anything.
+async function verifyInstance(daemon, project, allow) {
+  try {
+    const r = await fetch(`${daemon}/_api/projects/${project}`);
+    if (!r.ok) return { ok: false, error: `verify: daemon ${r.status}` };
+    const th = (await r.json()).tree_hash || "";
+    if (!allow.includes(th)) return { ok: false, error: `untrusted measurement (${th.slice(0, 10) || "none"})` };
+    return { ok: true };
+  } catch (e) { return { ok: false, error: `verify failed: ${e.message}` }; }
+}
+async function ensureTrusted() {
+  const d = $("daemon").value.replace(/\/$/, ""), p = $("project").value.trim(), a = $("allow").value.trim();
+  if (!(d && p && a)) return true;
+  const v = await verifyInstance(d, p, a.split(",").map((s) => s.trim()).filter(Boolean));
+  if (!v.ok) { status(`instance not trusted — ${v.error}`, false); return false; }
+  return true;
+}
+
+async function loadPlugins() {
+  // #14: jar status is per-identity — the server returns jars: [] for an anonymous
+  // caller. Authenticate with the wallet session (cached on first sync) so the
+  // subject's account-qualified jars actually come back.
+  const { walletSession, secret } = await chrome.storage.local.get(["walletSession", "secret"]);
+  const headers = secret ? { Authorization: `Bearer ${secret}` } : walletSession ? { Authorization: `Bearer ${walletSession}` } : {};
+  try { PLUGINS = (await (await fetch(`${node()}/api/plugins`, { headers })).json()).plugins; REACHABLE = true; }
+  catch { PLUGINS = []; REACHABLE = false; }
+}
+
+async function render() {
+  const { jars = {} } = await chrome.storage.local.get("jars");
+  let host = ""; try { host = new URL(node()).host; } catch { /* shown as empty */ }
+  $("instDot").className = "dot " + (REACHABLE ? "ok" : "bad");
+  $("instText").textContent = REACHABLE ? `instance reachable — ${host}` : `can't reach instance — ${host}`;
+
+  const ids = Object.keys(jars);
+  $("empty").hidden = ids.length > 0;
+  $("jars").innerHTML = ids.map((id) => {
+    const serverJars = PLUGINS.find((p) => p.id === id)?.jars || [];
+    // #14: one pill per account the server holds for this plugin. When the server
+    // lists none yet (never synced, or wallet not authed), fall back to the local
+    // subscription state so the row still reports the last sync / error.
+    const acct = serverJars.length
+      ? serverJars.map((j) => { const [st, txt] = jarHealth(j); return `<span class="pill ${st}">${txt}</span>`; }).join("")
+      : `<span class="pill ${health(jars[id])[0]}">${health(jars[id])[1]}</span>`;
+    return `<div class="jar" data-plugin="${id}">` +
+      `<div class="jhead"><span class="jname">${labelFor(id)}</span><button class="x" title="remove">✕</button></div>` +
+      `<div class="jstat">${acct}</div></div>`;
+  }).join("");
+
+  const avail = PLUGINS.filter((p) => !ids.includes(p.id));
+  $("addPlugin").innerHTML = avail.length
+    ? avail.map((p) => `<option value="${p.id}">${p.label}</option>`).join("")
+    : `<option value="">(no more sites)</option>`;
+  $("addBtn").disabled = !avail.length;
+}
+
+$("jars").addEventListener("click", async (e) => {
+  const row = e.target.closest(".jar"); if (!row) return;
+  const id = row.dataset.plugin;
+  if (e.target.classList.contains("x")) {
+    await chrome.runtime.sendMessage({ action: "remove-jar", plugin: id });
+    chrome.permissions.remove({ origins: originsFor(id) }); // best-effort cleanup
+    return render();
+  }
+  row.classList.add("busy");
+  try {
+    const r = await call({ action: "sync-plugin", plugin: id });
+    // #14: name the account the jar was stored under (from the sync response).
+    if (!r.ok) status(r.error || "sync failed", false);
+    else status(`${labelFor(id)}: account ${r.account ?? "default"} · ${r.count} cookies`, true);
+  } catch (e) { status(String(e.message || e), false); }
+  await loadPlugins(); // #14: re-fetch so the new account-qualified jar renders.
+  await render();
+});
+
+$("addBtn").addEventListener("click", async () => {
+  const id = $("addPlugin").value; if (!id) return;
+  try {
+    // permissions.request MUST be the first await — Chrome consumes the click
+    // gesture on any prior await, then throws "may only be called during a user gesture".
+    const origins = originsFor(id);
+    if (origins.length && !(await chrome.permissions.request({ origins }))) {
+      status(`host permission needed to read ${labelFor(id)} cookies`, false); return;
+    }
+    if (!(await ensureTrusted())) return;
+    const r = await call({ action: "add-jar", plugin: id });
+    // #14: surface the account the jar landed under, not just the cookie count.
+    status(r.ok ? `${labelFor(id)}: account ${r.account ?? "default"} · ${r.error || `${r.count} cookies`}` : (r.error || "add failed"), r.ok && !r.error);
+    await loadPlugins();
+    await render();
+  } catch (e) { status(String(e.message || e), false); }
+});
+
+$("syncAll").addEventListener("click", async () => {
+  if (!(await ensureTrusted())) return;
+  $("syncAll").disabled = true; $("syncAll").textContent = "Syncing…";
+  try {
+    const r = await call({ action: "sync-now" });
+    if (!r.ok) status(r.error || "sync failed", false);
+  } catch (e) { status(String(e.message || e), false); }
+  $("syncAll").disabled = false; $("syncAll").textContent = "Sync all now";
+  await loadPlugins(); // #14: re-fetch so account-qualified jars reflect the sync.
+  await render();
+});
+
+const advCfg = () => ({
+  serverUrl: $("serverUrl").value.replace(/\/$/, ""), secret: $("secret").value,
+  daemon: $("daemon").value.replace(/\/$/, ""), project: $("project").value.trim(), allow: $("allow").value.trim(),
+});
+$("saveAdv").addEventListener("click", async () => { await chrome.storage.local.set(advCfg()); status("saved", true); await loadPlugins(); await render(); });
+$("serverUrl").addEventListener("change", async () => { await chrome.storage.local.set(advCfg()); await loadPlugins(); await render(); });
+
+(async () => {
+  const cfg = await chrome.storage.local.get(["serverUrl", "secret", "daemon", "project", "allow", "walletSubject"]);
+  $("serverUrl").value = cfg.serverUrl || DEFAULT_HOMESERVER;
+  $("secret").value = cfg.secret || ""; $("daemon").value = cfg.daemon || "";
+  $("project").value = cfg.project || ""; $("allow").value = cfg.allow || "";
+  if (cfg.walletSubject) $("ident").textContent = `wallet identity: ${cfg.walletSubject}`;
+  for (const id of ["secret", "daemon", "project", "allow"]) $(id).addEventListener("input", () => chrome.storage.local.set(advCfg()));
+  await loadPlugins();
+  await render();
+})();
+
+</script>
 </body>
 </html>

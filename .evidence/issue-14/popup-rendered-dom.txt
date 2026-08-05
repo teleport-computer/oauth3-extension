@@ -1,4 +1,18 @@
-Rendered #jars (live, via envoy bridge evaluate) — UNMODIFIED popup.js against the
-real /api/plugins jars[] from the local oauth3 server:
+Rendered #jars (LIVE, against DEPLOYED staging) — UNMODIFIED shipped popup.js (PR #20),
+driven through the envoy/neko bridge. The harness page stubs chrome.* (render-time only)
+and lets popup.js fetch /api/plugins LIVE from staging with the u-swarm wallet Bearer
+(staging sends Access-Control-Allow-Origin: * and allows Authorization, so a page CAN read
+it — no fetch shim). See harness.html and 01-popup.png.
 
-{"jarsOuter":"<div id=\"jars\"><div class=\"jar\" data-plugin=\"twitter\"><div class=\"jhead\"><span class=\"jname\">Twitter / X timeline (browser-path)</span><button class=\"x\" title=\"remove\">✕</button></div><div class=\"jstat\"><span class=\"pill ok\">111 · 3 · 7m ago</span><span class=\"pill ok\">222 · 3 · 7m ago</span></div></div><div class=\"jar\" data-plugin=\"amazon\"><div class=\"jhead\"><span class=\"jname\">Amazon (cart)</span><button class=\"x\" title=\"remove\">✕</button></div><div class=\"jstat\"><span class=\"pill ok\">default · 2 · 7m ago</span></div></div></div>","pills":["pill ok :: 111 · 3 · 7m ago","pill ok :: 222 · 3 · 7m ago","pill ok :: default · 2 · 7m ago"],"instText":"instance reachable — localhost:14714","emptyHidden":true}
+instance dot: ok   instance text: "instance reachable — 78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network"
+
+pills rendered (one per account the server holds — replaces the single present/absent badge):
+  pill ok  :: 111 · 3 · 7m ago     <- twitter account 111
+  pill ok  :: 222 · 3 · 7m ago     <- twitter account 222  (second jar, NOT an overwrite)
+  pill ok  :: default · 2 · 7m ago <- amazon account default
+
+bridge evaluate result (verbatim):
+{"success":true,"result":{"inst":"instance reachable — 78ffc78c25e0c8a9e64bb3a969ba6f226abae62d-8080.dstack-pha-prod7.phala.network","pills":["111 · 3 · 7m ago","222 · 3 · 7m ago","default · 2 · 7m ago"]}}
+
+=> AC1 (account shown per jar) and AC3 (one pill per account from GET /api/plugins jars[])
+   are satisfied by the shipped render reading the real, deployed-staging server response.

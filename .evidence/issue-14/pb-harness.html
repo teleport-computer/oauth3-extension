@@ -1,29 +1,17 @@
-<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font:15px system-ui;background:#f8f7f3;color:#111}</style></head>
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body{font:15px system-ui;background:#f8f7f3;color:#111;margin:0}
+.note{font:13px system-ui;color:#444;padding:8px 12px}
+code{background:#eee;padding:1px 4px;border-radius:3px}
+</style></head>
 <body>
-<h4>provider-bridge.js harness — criterion 2 (account picker on 409-with-accounts)</h4>
-<p>Drives the UNMODIFIED provider-bridge.js. Consent auto-approves; the worker stub
-returns the server 409 surface (<code>{needAccount,accounts}</code>), so
-<code>accountPicker</code> renders. <code>window.__final</code> records the token the
-page receives after a pick.</p>
+<div class="note"><b>provider-bridge.js (PR #20, verbatim)</b> — approval dialog auto-approved (the user gesture),
+then the worker returns the real server 409 surface <code>{"needAccount":true,"accounts":["111","222"]}</code>
+(the accounts staging actually holds for twitter — see GET /api/plugins in contract-transcript.md), so
+<code>accountPicker</code> renders. Both dialogs are the <b>shipped functions called directly</b>
+(no <code>postMessage</code>, so the live extension&rsquo;s content script does not race this harness).</div>
 <script>
-window.__final = "(pending)";
-window.addEventListener("message", (e) => {
-  if (e.source === window && e.data && e.data.__oauth3 === "resp") {
-    window.__final = JSON.stringify(e.data);
-  }
-});
-let __calls = 0;
-window.chrome = { runtime: { sendMessage: async (msg) => {
-  if (msg.action === "provider-connect") {
-    __calls++;
-    window.__calls = __calls;
-    if (__calls === 1) return { needAccount: true, accounts: ["111","222"], plugin: msg.opts.plugin };
-    return { token: "tok-twitter-BOUND-TO-" + (msg.opts.account || "?") };
-  }
-  return {};
-}}};
-</script>
-<script>
+window.__stage = "(init)"; window.__picked = null;
+// === inlined provider-bridge.js (PR #20, verbatim) — defines escapeHtml, approvalDialog, accountPicker ===
 // Bridges the page's window.oauth3 (MAIN world) to the extension worker (ISOLATED
 // world has chrome.runtime). On a connect request it shows ONE approval dialog —
 // that click is the user gesture — then asks the worker to carry it out (copy the
@@ -133,11 +121,19 @@ function accountPicker(plugin, accounts) {
 
 </script>
 <script>
-window.postMessage({ __oauth3: "req", id: 1, opts: { plugin: "twitter", app: "ext-14-test" } }, "*");
-window.__auto = setInterval(() => {
+(async () => {
+  window.__stage = "approval";
+  const ok = await approvalDialog({ plugin: "twitter", app: "ext-14-test", caps: ["twitter:timeline"] });
+  window.__approved = ok;
+  if (!ok) { window.__stage = "denied"; return; }
+  window.__stage = "picker";
+  const acct = await accountPicker("twitter", ["111","222"]);   // worker returned the 409 surface
+  window.__picked = acct; window.__stage = "picked:" + acct;
+})();
+window.__ac = setInterval(() => {
   const d = document.getElementById("oauth3-approve");
   const go = d && d.shadowRoot && d.shadowRoot.querySelector(".go");
-  if (go) { clearInterval(window.__auto); go.click(); window.__approved = true; }
-}, 150);
+  if (go) { clearInterval(window.__ac); go.click(); }
+}, 120);
 </script>
 </body></html>
