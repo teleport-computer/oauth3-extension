@@ -194,7 +194,7 @@ async function renderSite() {
   $("useHere").hidden = !origin || instance || approved;
   $("revokeSite").hidden = !origin || instance || !approved;
   const perm = origin ? await chrome.permissions.contains({ origins: [`${origin}/*`] }) : false;
-  $("sitePerm").textContent = origin ? `host permission: ${perm ? "granted" : "none"}` : "";
+  $("sitePerm").textContent = info?.siteError ? `site activation error: ${info.siteError}` : (origin ? `host permission: ${perm ? "granted" : "none"}` : "");
 }
 
 $("useHere").addEventListener("click", async () => {

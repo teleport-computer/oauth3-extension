@@ -149,7 +149,10 @@ const SITE_SCRIPTS = [
   { suffix: "inject", js: "provider-inject.js", world: "MAIN" },
   { suffix: "bridge", js: "provider-bridge.js", world: "ISOLATED" },
 ];
-const siteSlug = (origin) => origin.replace(/^https?:\/\//, "").replace(/[^a-z0-9.-]+/gi, "-");
+// Ids must be [A-Za-z0-9_-] — hostnames' dots are NOT legal in script ids
+// (Chrome rejects the registration with "Invalid value for id"), so squash
+// everything non-alphanumeric into hyphens.
+const siteSlug = (origin) => origin.replace(/^https?:\/\//, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+/, "");
 const sitePattern = (origin) => `${origin}/*`;
 const siteIds = (origin) => SITE_SCRIPTS.map((s) => `oauth3-${s.suffix}-${siteSlug(origin)}`);
 
@@ -214,7 +217,13 @@ async function syncSiteActivation() {
   const wantedIds = new Set([...wanted].flatMap(siteIds));
   const ours = (await chrome.scripting.getRegisteredContentScripts()).filter((s) => s.id.startsWith("oauth3-"));
   for (const s of ours) if (!wantedIds.has(s.id)) await chrome.scripting.unregisterContentScripts({ ids: [s.id] }).catch(() => {});
-  for (const o of wanted) await registerOrigin(o).catch((e) => console.warn("[sites]", o, e?.message || e));
+  let siteError = "";
+  for (const o of wanted) {
+    try { await registerOrigin(o); }
+    catch (e) { console.warn("[sites]", o, e?.message || e); siteError = `${o}: ${e?.message || e}`; }
+  }
+  // last registration error, if any — surfaced in the popup's site card
+  await chrome.storage.local.set({ siteError });
 }
 chrome.runtime.onInstalled.addListener(syncSiteActivation);
 chrome.runtime.onStartup.addListener(syncSiteActivation);
@@ -253,8 +262,8 @@ chrome.runtime.onMessage.addListener((msg, _s, send) => {
   }
   if (msg?.action === "site-info") {
     (async () => {
-      const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
-      return { ok: true, instanceOrigins: await instanceOrigins(), approvedOrigins };
+      const { approvedOrigins = [], siteError = "" } = await chrome.storage.local.get(["approvedOrigins", "siteError"]);
+      return { ok: true, instanceOrigins: await instanceOrigins(), approvedOrigins, siteError };
     })().then(send).catch((e) => send({ ok: false, error: String(e.message || e) }));
     return true;
   }
