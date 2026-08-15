@@ -84,6 +84,13 @@ header .meta { font: 500 10px/1.2 var(--mono); letter-spacing: .14em; text-trans
 #instance .dot { width: 9px; height: 9px; flex: 0 0 auto; }
 #instText { min-width: 0; }
 
+/* #29 per-site activation — the wallet is only present on origins approved here */
+#site { display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--card); border: 1.5px solid var(--rule); }
+#site .shead { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+#siteOrigin { font: 600 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#site .btn { justify-content: center; padding: 10px 14px; }
+#sitePerm { font: 11px var(--mono); color: var(--faint); }
+
 #jars { display: flex; flex-direction: column; gap: 6px; }
 .jar { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: var(--card); border: 1.5px solid var(--rule); cursor: pointer; }
 .jar:hover { background: var(--wash1); }
@@ -129,6 +136,13 @@ summary { font: 500 11px var(--mono); letter-spacing: .12em; text-transform: low
     <div id="ident">this browser is your identity — no sign-in needed</div>
 
     <div id="instance"><span class="dot" id="instDot"></span><span id="instText">checking…</span></div>
+
+    <div id="site">
+      <div class="shead"><span id="siteOrigin">…</span><span class="pill" id="siteState">…</span></div>
+      <button id="useHere" class="btn">Use OAuth3 here</button>
+      <button id="revokeSite" class="btn danger">Stop using OAuth3 on this site</button>
+      <div id="sitePerm"></div>
+    </div>
 
     <div id="jars"></div>
     <div id="empty" hidden>No jars yet — add a site below to keep it synced into your instance.</div>

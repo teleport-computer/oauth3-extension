@@ -155,8 +155,74 @@ const advCfg = () => ({
   serverUrl: $("serverUrl").value.replace(/\/$/, ""), secret: $("secret").value,
   daemon: $("daemon").value.replace(/\/$/, ""), project: $("project").value.trim(), allow: $("allow").value.trim(),
 });
-$("saveAdv").addEventListener("click", async () => { await chrome.storage.local.set(advCfg()); status("saved", true); await loadPlugins(); await render(); });
-$("serverUrl").addEventListener("change", async () => { await chrome.storage.local.set(advCfg()); await loadPlugins(); await render(); });
+// #29: if the instance moves off the statically-granted hosts (localhost/phala),
+// ask for its origin now — the wallet must inject there (login/dashboard) without a
+// manual site-approve. permissions.request is the first await: the click is the
+// gesture, and it resolves silently when the grant already holds.
+$("saveAdv").addEventListener("click", async () => {
+  let origin = ""; try { origin = new URL($("serverUrl").value).origin; } catch { /* invalid URL: saved as-is, surfaced by the health line */ }
+  if (origin && !(await chrome.permissions.request({ origins: [`${origin}/*`] }))) {
+    status(`no host permission for ${origin} — the wallet can't inject there`, false); return;
+  }
+  await chrome.storage.local.set(advCfg()); status("saved", true); await loadPlugins(); await render(); await renderSite();
+});
+// No permission prompt on auto-save (a change event isn't a gesture the prompt
+// accepts) — the registration follows via storage.onChanged; the grant is what
+// Save asks for.
+$("serverUrl").addEventListener("change", async () => { await chrome.storage.local.set(advCfg()); await loadPlugins(); await render(); await renderSite(); });
+
+// --- #29: per-site activation ("Use OAuth3 here") ---
+// The provider (window.oauth3) is injected only on origins approved here (dynamic
+// content-script registration + a per-origin host grant, both restart-durable) and
+// on the instance's own origin. Opening the popup is the activeTab gesture that
+// makes the active tab's URL visible.
+let SITE = { origin: "", tabId: 0, instance: false, approved: false };
+
+async function renderSite() {
+  const info = await call({ action: "site-info" }).catch(() => null);
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let origin = ""; try { origin = tab?.url ? new URL(tab.url).origin : ""; } catch { /* chrome://, file:// … */ }
+  const instance = !!info?.instanceOrigins?.includes(origin);
+  const approved = !!info?.approvedOrigins?.includes(origin);
+  SITE = { origin, tabId: tab?.id || 0, instance, approved };
+  $("siteOrigin").textContent = origin || "(no page)";
+  const st = $("siteState");
+  if (!origin) { st.textContent = "not a site"; st.className = "pill"; }
+  else if (instance) { st.textContent = "instance · always on"; st.className = "pill ok"; }
+  else if (approved) { st.textContent = "active"; st.className = "pill ok"; }
+  else { st.textContent = "not active"; st.className = "pill"; }
+  $("useHere").hidden = !origin || instance || approved;
+  $("revokeSite").hidden = !origin || instance || !approved;
+  const perm = origin ? await chrome.permissions.contains({ origins: [`${origin}/*`] }) : false;
+  $("sitePerm").textContent = origin ? `host permission: ${perm ? "granted" : "none"}` : "";
+}
+
+$("useHere").addEventListener("click", async () => {
+  const { origin, tabId } = SITE; if (!origin) return;
+  // permissions.request MUST be the first await — the click is the gesture, and the
+  // "Allow OAuth3 to read and change <site>?" prompt IS the approval. Registration
+  // and the reload run in the worker so they survive the popup closing on the prompt.
+  if (!(await chrome.permissions.request({ origins: [`${origin}/*`] }))) {
+    status(`no host permission — the wallet stays off ${origin}`, false); return;
+  }
+  try {
+    const r = await call({ action: "approve-site", origin, tabId });
+    if (!r.ok) { status(r.error || "could not approve site", false); return; }
+    status(`${origin} approved — reloading…`, true);
+  } catch (e) { status(String(e.message || e), false); }
+  await renderSite();
+});
+
+$("revokeSite").addEventListener("click", async () => {
+  const { origin, tabId } = SITE; if (!origin) return;
+  try {
+    await chrome.permissions.remove({ origins: [`${origin}/*`] }); // drop the grant first…
+    const r = await call({ action: "revoke-site", origin, tabId }); // …then scripts + list in the worker
+    if (!r.ok) { status(r.error || "could not revoke site", false); return; }
+    status(`${origin} revoked — reloading…`, true);
+  } catch (e) { status(String(e.message || e), false); }
+  await renderSite();
+});
 
 (async () => {
   const cfg = await chrome.storage.local.get(["serverUrl", "secret", "daemon", "project", "allow", "walletSubject"]);
@@ -167,4 +233,5 @@ $("serverUrl").addEventListener("change", async () => { await chrome.storage.loc
   for (const id of ["secret", "daemon", "project", "allow"]) $(id).addEventListener("input", () => chrome.storage.local.set(advCfg()));
   await loadPlugins();
   await render();
+  await renderSite();
 })();
