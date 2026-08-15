@@ -199,17 +199,16 @@ async function renderSite() {
 
 $("useHere").addEventListener("click", async () => {
   const { origin, tabId } = SITE; if (!origin) return;
-  // permissions.request MUST be the first await — the click is the gesture, and the
-  // "Allow OAuth3 to read and change <site>?" prompt IS the approval. Registration
-  // and the reload run in the worker so they survive the popup closing on the prompt.
-  if (!(await chrome.permissions.request({ origins: [`${origin}/*`] }))) {
-    status(`no host permission — the wallet stays off ${origin}`, false); return;
-  }
-  try {
-    const r = await call({ action: "approve-site", origin, tabId });
-    if (!r.ok) { status(r.error || "could not approve site", false); return; }
-    status(`${origin} approved — reloading…`, true);
-  } catch (e) { status(String(e.message || e), false); }
+  // Arm the worker BEFORE the prompt (fire-and-forget, no await — the click
+  // gesture must survive for permissions.request): the "Allow … on <origin>"
+  // prompt closes this popup, so the grant itself drives activation. The worker
+  // polls for the grant and reloads the tab.
+  chrome.runtime.sendMessage({ action: "arm-approve-site", origin, tabId }).catch(() => {});
+  // permissions.request MUST be the first await — the click is the gesture, and
+  // the prompt IS the approval.
+  const granted = await chrome.permissions.request({ origins: [`${origin}/*`] });
+  if (!granted) { status(`no host permission — the wallet stays off ${origin}`, false); return; }
+  status(`${origin} approved — reloading…`, true);
   await renderSite();
 });
 

@@ -172,6 +172,34 @@ async function registerOrigin(origin) {
   }
 }
 
+async function activateOrigin(origin) {
+  const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
+  if (!approvedOrigins.includes(origin)) { approvedOrigins.push(origin); await chrome.storage.local.set({ approvedOrigins }); }
+  await registerOrigin(origin);
+}
+
+async function deactivateOrigin(origin) {
+  const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
+  await chrome.storage.local.set({ approvedOrigins: approvedOrigins.filter((o) => o !== origin) });
+  await unregisterOrigin(origin);
+}
+
+// Losing the per-origin grant (Chrome's site settings, or a revoke elsewhere)
+// must take the provider with it — the scripts cannot inject without it. Only
+// origins the user explicitly approved as provider sites are touched, so a jar
+// (cookie-read) grant being dropped never affects unrelated site activation.
+chrome.permissions.onRemoved.addListener((p) => {
+  (async () => {
+    for (const o of p.origins || []) {
+      const origin = o.replace(/\/\*$/, "");
+      if ((await instanceOrigins()).includes(origin)) continue;
+      const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
+      if (!approvedOrigins.includes(origin)) continue;
+      await deactivateOrigin(origin);
+    }
+  })().catch((e) => console.warn("[sites]", e?.message || e));
+});
+
 async function unregisterOrigin(origin) {
   // "never registered" is a successful revoke — make it idempotent.
   await chrome.scripting.unregisterContentScripts({ ids: siteIds(origin) }).catch(() => {});
@@ -231,24 +259,36 @@ chrome.runtime.onMessage.addListener((msg, _s, send) => {
     return true;
   }
   if (msg?.action === "approve-site") {
-    // The popup already acquired the per-origin host grant (the user gesture); the
-    // registration + reload run here so they survive the popup closing on the
-    // permission prompt. The provider lands on the reload — content scripts
-    // inject at document_start of future loads only.
-    (async () => {
-      const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
-      if (!approvedOrigins.includes(msg.origin)) { approvedOrigins.push(msg.origin); await chrome.storage.local.set({ approvedOrigins }); }
-      await registerOrigin(msg.origin);
-      if (msg.tabId) chrome.tabs.reload(msg.tabId);
-    })().then(() => send({ ok: true })).catch((e) => send({ ok: false, error: String(e.message || e) }));
+    // Direct path (grant already held — no prompt, popup alive): activate now.
+    activateOrigin(msg.origin)
+      .then(() => { if (msg.tabId) chrome.tabs.reload(msg.tabId); })
+      .then(() => send({ ok: true }))
+      .catch((e) => send({ ok: false, error: String(e.message || e) }));
     return true;
+  }
+  if (msg?.action === "arm-approve-site") {
+    // The popup fires this BEFORE chrome.permissions.request (fire-and-forget):
+    // the "Allow … on <origin>" prompt CLOSES the popup, so the popup's own
+    // continuation dies with it. The grant itself drives the activation — poll
+    // for it (user-scale wait), then activate + reload the tab. No grant within
+    // 90s = the user answered "No"/closed the prompt: do nothing.
+    (async () => {
+      const pattern = sitePattern(msg.origin);
+      for (let i = 0; i < 90; i++) {
+        if (await chrome.permissions.contains({ origins: [pattern] })) {
+          await activateOrigin(msg.origin);
+          if (msg.tabId) chrome.tabs.reload(msg.tabId);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    })().catch((e) => console.warn("[sites]", e?.message || e));
+    return false; // no sendResponse — the asking popup may already be gone
   }
   if (msg?.action === "revoke-site") {
     (async () => {
       if ((await instanceOrigins()).includes(msg.origin)) throw new Error("the instance's own origin is always active");
-      const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
-      await chrome.storage.local.set({ approvedOrigins: approvedOrigins.filter((o) => o !== msg.origin) });
-      await unregisterOrigin(msg.origin);
+      await deactivateOrigin(msg.origin);
       if (msg.tabId) chrome.tabs.reload(msg.tabId);
     })().then(() => send({ ok: true })).catch((e) => send({ ok: false, error: String(e.message || e) }));
     return true;
