@@ -110,8 +110,8 @@ server (`POST /api/login`), and the extension's wallet uses the first:
 1. **userKey wallet (default).** On first use the extension mints a random
    64-hex-char `userKey`, kept in `chrome.storage.local` (the localStorage
    analog). It posts it to `/api/login`; the server derives
-   `subject = "u-" + sha256hex(userKey)` and returns a session token, cached as
-   `walletSession`. The popup then reads `wallet identity: u-<hash>`. The session
+   `subject = "u-" + sha256hex(userKey)` and returns a session token, cached in
+   `walletSessions[node]`. The popup then reads `wallet identity: u-<hash>`. The session
    persists on the node's data volume and is reused, so the same browser = the
    same `u-<hash>` account across syncs. **This is "you".**
 2. **Owner secret (override).** If `secret` is set in Advanced, it is sent as the
