@@ -1,53 +1,37 @@
-# PLAN — issue #14: Jar sync + connect: surface account-qualified jars (picker)
+# PLAN — #29 [extension] Per-site activation (inject the provider only on approved sites)
 
-Base: `staging`. Branch: `ready-14`. Tier: **2** (extension UI + flow) with a **Tier 1**
-contract transcript (the extension speaks the account-qualified server contract).
-
-## Acceptance (from issue #14 `## Acceptance`)
-1. After a cookie sync, the UI shows which account the jar was stored under, read from the
-   `account` the sync (`POST /api/cookies`) response now returns.
-2. A 409-with-accounts from the connect flow renders a picker, and re-submitting with `account`
-   set completes the connect.
-3. Plugin status lists the `jars: [{account, updatedAt, count}]` array from `GET /api/plugins`
-   instead of one present/absent badge.
+Issue: teleport-computer/oauth3-server#29 (code lives here, `oauth3-extension`; acceptance mirrored
+verbatim at #23 for the same-repo merge gate — branch renamed `staging-oa-29` → `staging-oa-23`, see
+PR #22's BLOCKED thread).
+Checkboxes derived from the issue's `## Acceptance`.
 
 ## Already on staging?
-- [x] CHECKED: none of the three are implemented on `origin/staging`.
-  - `syncOne` ignores the sync response `account`; `jars[plugin]` has no account field. (AC1 ✗)
-  - `providerConnect` throws on any non-OK approve; no 409/picker. (AC2 ✗)
-  - popup `loadPlugins` is anonymous (server returns `jars: []` for anon) and renders one
-    present/absent badge from local storage. (AC3 ✗)
-  → Do the whole issue.
+- [x] CHECKED: not implemented on `origin/staging` — `manifest.json` still carries both
+  static `<all_urls>` content_scripts; no `approvedOrigins`, no
+  `chrome.scripting.registerContentScripts`, no popup site-approve anywhere
+  (`grep` across the repo). The vendored rig copy (`oauth3-apps/oauth3-extension`)
+  is the same. → Do the whole issue.
 
-## Server contract (verified from oauth3-server `origin/staging` source + local boot)
-- `POST /api/cookies` → `{ ok, plugin, account, count }` (account derived from jar, e.g. twid).
-- `GET /api/plugins` (authed) → `plugins[].jars: [{account, updatedAt, count}]`; anon → `[]`.
-- `POST /api/connect` accepts `body.account`; approve (`POST /api/connect/:id/approve`) 409s
-  with `{ accounts: [...] }` when the approver holds >1 jars for the plugin and none named.
-  Re-POST `/api/connect` with `account` set, then approve, succeeds.
+## Design
+- Drop the static `<all_urls>` `content_scripts`; register `provider-inject.js`
+  (MAIN world) + `provider-bridge.js` (ISOLATED) dynamically per approved origin via
+  `chrome.scripting.registerContentScripts` (`persistAcrossSessions: true`).
+- `approvedOrigins` list in `chrome.storage.local` + a per-origin host grant from
+  `chrome.permissions.request` (optional_host_permissions) — both restart-durable.
+- Popup "Use OAuth3 here" adds the active tab's origin (activeTab gesture); revoke
+  unregisters + drops the host permission.
+- The instance's own origin (serverUrl + DEFAULT_HOMESERVER) is auto-approved —
+  registered on install/startup/serverUrl-change so sign-in doesn't regress.
 
-## Build
-- [ ] `service-worker.js`
-  - `syncOne`: parse `/api/cookies` JSON, capture `account`, store on `jars[plugin]`, return it.
-  - `providerConnect`: forward `opts.account` into `POST /api/connect`; on approve 409 with
-    `accounts`, return `{ needAccount: true, accounts, plugin }` (don't throw).
-- [ ] `popup.js`
-  - `loadPlugins`: send wallet bearer (session/secret) so `jars[]` is populated.
-  - `render`: list per-account jars from `PLUGINS[id].jars` (server authority) instead of one
-    badge.
-  - sync/add handlers: status line names the account; reload plugins after sync.
-- [ ] `popup.html`: CSS for per-account pill rows (token-based).
-- [ ] `provider-bridge.js`: `accountPicker(plugin, accounts)` dialog; on `needAccount`, show it
-  and re-send `provider-connect` with `account` set.
+## Checkboxes (from ## Acceptance)
+- [x] On an un-approved site, `typeof window.oauth3 === "undefined"`.
+- [x] "Use OAuth3 here" in the popup → reload → `window.oauth3` object, `connect()` completes; origin survives browser restart.
+- [x] Revoke in popup → reload → `undefined` again; host permission dropped.
+- [x] Instance's own origin (login/dashboard) gets the provider with no manual approve.
 
-## Verify
-- [ ] `node --check` every changed `.js`.
-- [ ] Local boot of oauth3-server (staging oauth3 node is 500ing — infra, not this issue): sync
-  two twitter-shaped jars, capture: sync `account`, `/api/plugins` `jars[]`, connect→approve 409,
-  re-connect with account → token. (Tier 1 contract transcript.)
-- [ ] Bridge render of popup with real `jars[]` (harness stubs `chrome.storage` with the live
-  server response) + the account picker. (Tier 2 UI render.)
-
-## Ship
-- [ ] commit + push `ready-14` → PR to `staging`.
-- [ ] swap `ready` → `in-review` on issue #14.
+## Steps
+- [x] manifest: drop static content_scripts; add `scripting` + `activeTab`; optional host perms http+https.
+- [x] service-worker: per-origin register/unregister/sync + `site-info`/`approve-site`/`revoke-site` handlers.
+- [x] popup: site card (origin, state, Use/Stop buttons, permission line) + Advanced save asks for a custom instance origin's grant.
+- [x] `node --check` all JS; manifest JSON valid; `make-staging.sh` builds.
+- [x] Tier 2 walk on the envoy/neko rig (branch build loaded in the shared Brave), screenshots → `.evidence/issue-23/` (13 shots + flow.md; popup/prompt driven with OS-level xdotool, per LESSONS no-CDP rule; walked at `a1d8540` under the branch's old name `staging-oa-29`, dir re-keyed with the rename — no code change).

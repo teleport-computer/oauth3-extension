@@ -131,6 +131,106 @@ async function syncAll() {
 
 const nodeOf = async () => ((await chrome.storage.local.get("serverUrl")).serverUrl || DEFAULT_HOMESERVER).replace(/\/$/, "");
 
+// --- Per-site activation: the provider ships only where the user opted in (#29) ---
+// The static <all_urls> content_scripts made the wallet visible (and fingerprintable)
+// on every page the browser visits. Now provider-inject.js (MAIN world) and
+// provider-bridge.js are registered dynamically for exactly two sets of origins:
+//   1. origins approved via the popup's "Use OAuth3 here" — persisted in
+//      storage.approvedOrigins + a per-origin host grant, both of which survive
+//      browser restarts, as do the registrations themselves;
+//   2. the instance's own origin (login/dashboard) — auto-approved, otherwise
+//      extension-mediated sign-in regresses.
+// Revoking unregisters the scripts and drops the host permission, taking the page
+// back to `typeof window.oauth3 === "undefined"` on the next load.
+
+// One registration per world: `world` applies to the whole registration, so the MAIN
+// injector and the ISOLATED bridge are separate entries with derived ids.
+const SITE_SCRIPTS = [
+  { suffix: "inject", js: "provider-inject.js", world: "MAIN" },
+  { suffix: "bridge", js: "provider-bridge.js", world: "ISOLATED" },
+];
+// Ids must be [A-Za-z0-9_-] — hostnames' dots are NOT legal in script ids
+// (Chrome rejects the registration with "Invalid value for id"), so squash
+// everything non-alphanumeric into hyphens.
+const siteSlug = (origin) => origin.replace(/^https?:\/\//, "").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+/, "");
+const sitePattern = (origin) => `${origin}/*`;
+const siteIds = (origin) => SITE_SCRIPTS.map((s) => `oauth3-${s.suffix}-${siteSlug(origin)}`);
+
+async function instanceOrigins() {
+  const { serverUrl } = await chrome.storage.local.get("serverUrl");
+  const origins = [serverUrl, DEFAULT_HOMESERVER].filter(Boolean)
+    .map((n) => { try { return new URL(n).origin; } catch { return ""; } }).filter(Boolean);
+  return [...new Set(origins)];
+}
+
+async function registerOrigin(origin) {
+  const have = new Set((await chrome.scripting.getRegisteredContentScripts()).map((s) => s.id));
+  for (const s of SITE_SCRIPTS) {
+    const id = `oauth3-${s.suffix}-${siteSlug(origin)}`;
+    if (have.has(id)) continue;
+    await chrome.scripting.registerContentScripts([{
+      id, matches: [sitePattern(origin)], js: [s.js],
+      world: s.world, runAt: "document_start", persistAcrossSessions: true,
+    }]);
+  }
+}
+
+async function activateOrigin(origin) {
+  const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
+  if (!approvedOrigins.includes(origin)) { approvedOrigins.push(origin); await chrome.storage.local.set({ approvedOrigins }); }
+  await registerOrigin(origin);
+}
+
+async function deactivateOrigin(origin) {
+  const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
+  await chrome.storage.local.set({ approvedOrigins: approvedOrigins.filter((o) => o !== origin) });
+  await unregisterOrigin(origin);
+}
+
+// Losing the per-origin grant (Chrome's site settings, or a revoke elsewhere)
+// must take the provider with it — the scripts cannot inject without it. Only
+// origins the user explicitly approved as provider sites are touched, so a jar
+// (cookie-read) grant being dropped never affects unrelated site activation.
+chrome.permissions.onRemoved.addListener((p) => {
+  (async () => {
+    for (const o of p.origins || []) {
+      const origin = o.replace(/\/\*$/, "");
+      if ((await instanceOrigins()).includes(origin)) continue;
+      const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
+      if (!approvedOrigins.includes(origin)) continue;
+      await deactivateOrigin(origin);
+    }
+  })().catch((e) => console.warn("[sites]", e?.message || e));
+});
+
+async function unregisterOrigin(origin) {
+  // "never registered" is a successful revoke — make it idempotent.
+  await chrome.scripting.unregisterContentScripts({ ids: siteIds(origin) }).catch(() => {});
+}
+
+// Reconcile registrations with intent: approvedOrigins + instance origins stay
+// (re)registered; anything else of ours is retired (e.g. the previous instance
+// origin after a serverUrl change).
+async function syncSiteActivation() {
+  const { approvedOrigins = [] } = await chrome.storage.local.get("approvedOrigins");
+  const wanted = new Set([...(await instanceOrigins()), ...approvedOrigins]);
+  const wantedIds = new Set([...wanted].flatMap(siteIds));
+  const ours = (await chrome.scripting.getRegisteredContentScripts()).filter((s) => s.id.startsWith("oauth3-"));
+  for (const s of ours) if (!wantedIds.has(s.id)) await chrome.scripting.unregisterContentScripts({ ids: [s.id] }).catch(() => {});
+  let siteError = "";
+  for (const o of wanted) {
+    try { await registerOrigin(o); }
+    catch (e) { console.warn("[sites]", o, e?.message || e); siteError = `${o}: ${e?.message || e}`; }
+  }
+  // last registration error, if any — surfaced in the popup's site card
+  await chrome.storage.local.set({ siteError });
+}
+chrome.runtime.onInstalled.addListener(syncSiteActivation);
+chrome.runtime.onStartup.addListener(syncSiteActivation);
+chrome.storage.onChanged.addListener((ch, area) => {
+  if (area === "local" && (ch.serverUrl || ch.approvedOrigins)) syncSiteActivation();
+});
+
 chrome.runtime.onMessage.addListener((msg, _s, send) => {
   if (msg?.action === "sync-now") {
     syncAll().then((results) => send({ ok: true, results })).catch((e) => send({ ok: false, error: String(e.message || e) }));
@@ -158,6 +258,48 @@ chrome.runtime.onMessage.addListener((msg, _s, send) => {
   }
   if (msg?.action === "provider-connect") {
     providerConnect(msg.opts).then(send).catch((e) => send({ error: String(e.message || e) }));
+    return true;
+  }
+  if (msg?.action === "site-info") {
+    (async () => {
+      const { approvedOrigins = [], siteError = "" } = await chrome.storage.local.get(["approvedOrigins", "siteError"]);
+      return { ok: true, instanceOrigins: await instanceOrigins(), approvedOrigins, siteError };
+    })().then(send).catch((e) => send({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+  if (msg?.action === "approve-site") {
+    // Direct path (grant already held — no prompt, popup alive): activate now.
+    activateOrigin(msg.origin)
+      .then(() => { if (msg.tabId) chrome.tabs.reload(msg.tabId); })
+      .then(() => send({ ok: true }))
+      .catch((e) => send({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+  if (msg?.action === "arm-approve-site") {
+    // The popup fires this BEFORE chrome.permissions.request (fire-and-forget):
+    // the "Allow … on <origin>" prompt CLOSES the popup, so the popup's own
+    // continuation dies with it. The grant itself drives the activation — poll
+    // for it (user-scale wait), then activate + reload the tab. No grant within
+    // 90s = the user answered "No"/closed the prompt: do nothing.
+    (async () => {
+      const pattern = sitePattern(msg.origin);
+      for (let i = 0; i < 90; i++) {
+        if (await chrome.permissions.contains({ origins: [pattern] })) {
+          await activateOrigin(msg.origin);
+          if (msg.tabId) chrome.tabs.reload(msg.tabId);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    })().catch((e) => console.warn("[sites]", e?.message || e));
+    return false; // no sendResponse — the asking popup may already be gone
+  }
+  if (msg?.action === "revoke-site") {
+    (async () => {
+      if ((await instanceOrigins()).includes(msg.origin)) throw new Error("the instance's own origin is always active");
+      await deactivateOrigin(msg.origin);
+      if (msg.tabId) chrome.tabs.reload(msg.tabId);
+    })().then(() => send({ ok: true })).catch((e) => send({ ok: false, error: String(e.message || e) }));
     return true;
   }
 });
