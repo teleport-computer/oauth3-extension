@@ -1,7 +1,10 @@
 # Flow evidence — oauth3-server#29 — Per-site activation (provider only on approved sites)
 
-Repo: **teleport-computer/oauth3-extension**, branch `staging-oa-29` (base `staging`), commit of this
-`.evidence` dir. Issue: teleport-computer/oauth3-server#29, Evidence tier **2**.
+Repo: **teleport-computer/oauth3-extension**, branch `staging-oa-23` (base `staging`; renamed from
+`staging-oa-29`, where the Tier-2 walk ran at commit `a1d8540` — this evidence dir moved with the
+rename; **no code changed between the walk and this move**). Issue: teleport-computer/oauth3-server#29
+(the story of record), mirrored verbatim at oauth3-extension#23 so the same-repo merge gate can
+resolve its `## Acceptance`. Evidence tier **2**.
 
 ## Rig (real browser, real chrome UI — no CDP)
 - envoy/neko rig: real Brave inside the `envoy-browser` container (`docker-compose.alt.yml`, bridge on
@@ -51,6 +54,11 @@ Repo: **teleport-computer/oauth3-extension**, branch `staging-oa-29` (base `stag
   fresh load of example.com still `typeof window.oauth3 = "object"`; `09-popup-active-after-restart.png`
   — popup after restart shows `//example.com [active]`, `host permission: granted` (zoom-OCR
   transcript). ✓
+  - **Erratum (rework pass 3, 2026-08-16):** the `host permission: granted` line is NOT readable in
+    frame 09 — the capture likely preceded the async `chrome.permissions.contains` result populating
+    the permission line; frame 11 shows the revoke side (`host permission: none`) cleanly. The
+    granted state itself is still proven by 08: the post-restart banner reading `object` is only
+    reachable with the host grant, since injection is keyed on it.
 
 **AC3 — Revoking that site in the popup → reload → `undefined` again, host permission dropped.**
 - `10-revoked-undefined.png` — after clicking `STOP USING OAUTH3 ON THIS SITE` the tab auto-reloaded

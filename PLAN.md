@@ -1,6 +1,8 @@
 # PLAN — #29 [extension] Per-site activation (inject the provider only on approved sites)
 
-Issue: teleport-computer/oauth3-server#29 (code lives here, `oauth3-extension`).
+Issue: teleport-computer/oauth3-server#29 (code lives here, `oauth3-extension`; acceptance mirrored
+verbatim at #23 for the same-repo merge gate — branch renamed `staging-oa-29` → `staging-oa-23`, see
+PR #22's BLOCKED thread).
 Checkboxes derived from the issue's `## Acceptance`.
 
 ## Already on staging?
@@ -32,4 +34,4 @@ Checkboxes derived from the issue's `## Acceptance`.
 - [x] service-worker: per-origin register/unregister/sync + `site-info`/`approve-site`/`revoke-site` handlers.
 - [x] popup: site card (origin, state, Use/Stop buttons, permission line) + Advanced save asks for a custom instance origin's grant.
 - [x] `node --check` all JS; manifest JSON valid; `make-staging.sh` builds.
-- [x] Tier 2 walk on the envoy/neko rig (branch build loaded in the shared Brave), screenshots → `.evidence/issue-29/` (13 shots + flow.md; popup/prompt driven with OS-level xdotool, per LESSONS no-CDP rule).
+- [x] Tier 2 walk on the envoy/neko rig (branch build loaded in the shared Brave), screenshots → `.evidence/issue-23/` (13 shots + flow.md; popup/prompt driven with OS-level xdotool, per LESSONS no-CDP rule; walked at `a1d8540` under the branch's old name `staging-oa-29`, dir re-keyed with the rename — no code change).
