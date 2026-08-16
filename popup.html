@@ -89,6 +89,7 @@ header .meta { font: 500 10px/1.2 var(--mono); letter-spacing: .14em; text-trans
 #site .shead { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 #siteOrigin { font: 600 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #site .btn { justify-content: center; padding: 10px 14px; }
+#site .btn[hidden] { display: none; } /* .btn's display:inline-flex would defeat [hidden] */
 #sitePerm { font: 11px var(--mono); color: var(--faint); }
 
 #jars { display: flex; flex-direction: column; gap: 6px; }
