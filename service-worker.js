@@ -120,14 +120,41 @@ async function grabJar(domains) {
   return jar;
 }
 
-// State is per-jar now: storage.jars = { [pluginId]: { lastSync, ok, count, error } },
+// State is per-jar now: storage.jars = { [pluginId]: { lastSync, ok, count, error, digest } },
 // storage.jarDomains = { [pluginId]: [domain,...] } (cached for cookie-change matching).
 // A "jar" is a site the user added to keep fresh — no single selected plugin.
-async function syncOne(node, plugin) {
+//
+// #15: cookie churn is not freshness. Google rewrites .google.com cookies every
+// few seconds whenever one of its tabs is open, so a 1s-debounced on-change sync
+// POSTed a jar every 2–12s and flooded the node's audit log, while the real need
+// is the 30-min alarm. Cookie-triggered syncs now pass two gates — a cooldown
+// since the plugin's last sync (any trigger; 15 min is half the alarm period, so
+// a genuinely changed jar still lands within 15 min) and a digest of the grabbed
+// jar vs the last POSTed one. Manual syncs and the alarm are explicit acts on
+// their own cadence and are never rate-limited. The 30s debounce coalesces one
+// rotation burst into a single attempt; under continuous churn (every event
+// resets the timer) the attempt lands when the churn stops, and the alarm covers
+// the gap.
+const COOKIE_DEBOUNCE_MS = 30_000;
+const COOKIE_COOLDOWN_MS = 15 * 60_000;
+const jarDigest = async (jar) => {
+  // sorted name/value pairs: jar key order must not change the hash
+  const stable = Object.keys(jar).sort().map((n) => [n, jar[n]]);
+  const h = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(stable)));
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, "0")).join("");
+};
+
+async function syncOne(node, plugin, opts = {}) {
+  // opts.auto is set only by the cookie-change listener — the two #15 gates apply
+  // to it alone. Both run before any network call: cooldown needs no jar, digest
+  // needs the grabbed one.
+  const prev = opts.auto ? (await chrome.storage.local.get("jars")).jars?.[plugin] : undefined;
+  if (prev && Date.now() - prev.lastSync < COOKIE_COOLDOWN_MS) return { plugin, skipped: "cooldown" };
   const domains = await pluginDomains(node, plugin);
   const jar = await grabJar(domains);
+  if (prev?.digest && prev.digest === await jarDigest(jar)) return { plugin, skipped: "unchanged" };
   const count = Object.keys(jar).length;
-  let ok = false, error = "", account;
+  let ok = false, error = "", account, digest;
   if (!count) error = `no cookies for ${domains.join(",")}`;
   else {
     const bearer = await walletBearer(node);
@@ -141,15 +168,18 @@ async function syncOne(node, plugin) {
     if (ok) {
       // #14: the server derives the account from the jar (e.g. twitter twid → numeric
       // id) and returns it. Surface it in the UI so a second account is visible, not
-      // a silent overwrite.
+      // a silent overwrite. #15: record what we POSTed so a later auto sync can skip
+      // an identical jar; on failure the digest is left unset, so the next attempt
+      // re-POSTs rather than trusting a jar the node may not hold.
       const body = await r.json().catch(() => ({}));
       account = body?.account;
+      digest = await jarDigest(jar);
     } else {
       error = `${r.status} ${(await r.text().catch(() => "")).slice(0, 100)}`;
     }
   }
   const { jars = {}, jarDomains = {} } = await chrome.storage.local.get(["jars", "jarDomains"]);
-  jars[plugin] = { lastSync: Date.now(), ok, count, error, account };
+  jars[plugin] = { lastSync: Date.now(), ok, count, error, account, digest };
   jarDomains[plugin] = domains;
   await chrome.storage.local.set({ jars, jarDomains });
   return { plugin, ok, count, error, account };
@@ -353,5 +383,5 @@ chrome.cookies.onChanged.addListener(async ({ cookie }) => {
   const hit = Object.keys(jarDomains).filter((pid) => jarDomains[pid].some((d) => { const dd = d.replace(/^\./, ""); return cd === dd || cd.endsWith("." + dd); }));
   if (!hit.length) return;
   clearTimeout(debounce);
-  debounce = setTimeout(async () => { const n = await nodeOf(); for (const pid of hit) syncOne(n, pid).catch((e) => console.warn("[autosync]", e.message || e)); }, 1000);
+  debounce = setTimeout(async () => { const n = await nodeOf(); for (const pid of hit) syncOne(n, pid, { auto: true }).catch((e) => console.warn("[autosync]", e.message || e)); }, COOKIE_DEBOUNCE_MS);
 });
