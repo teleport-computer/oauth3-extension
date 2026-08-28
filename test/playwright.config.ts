@@ -2,7 +2,7 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: ".",
-  testMatch: /e2e\.spec\.ts$/,
+  testMatch: /\.spec\.ts$/,
   timeout: 90_000,
   reporter: [["list"]],
   outputDir: "/tmp/pw-out",

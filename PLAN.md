@@ -1,37 +1,35 @@
-# PLAN — #29 [extension] Per-site activation (inject the provider only on approved sites)
+# PLAN — #15 [extension] rate-limit cookie-change auto-sync
 
-Issue: teleport-computer/oauth3-server#29 (code lives here, `oauth3-extension`; acceptance mirrored
-verbatim at #23 for the same-repo merge gate — branch renamed `staging-oa-29` → `staging-oa-23`, see
-PR #22's BLOCKED thread).
-Checkboxes derived from the issue's `## Acceptance`.
+Issue: teleport-computer/oauth3-extension#15 (base `staging`). Checkboxes derived from
+the issue's `## Acceptance`.
 
 ## Already on staging?
-- [x] CHECKED: not implemented on `origin/staging` — `manifest.json` still carries both
-  static `<all_urls>` content_scripts; no `approvedOrigins`, no
-  `chrome.scripting.registerContentScripts`, no popup site-approve anywhere
-  (`grep` across the repo). The vendored rig copy (`oauth3-apps/oauth3-extension`)
-  is the same. → Do the whole issue.
+- [x] CHECKED: not implemented on `origin/staging` @ `5aa14d2` — the `cookies.onChanged`
+  listener debounces 1s and calls `syncOne` bare; `syncOne` POSTs unconditionally (no
+  cooldown, no digest, no `auto` flag anywhere in `service-worker.js`). → Do the whole issue.
 
-## Design
-- Drop the static `<all_urls>` `content_scripts`; register `provider-inject.js`
-  (MAIN world) + `provider-bridge.js` (ISOLATED) dynamically per approved origin via
-  `chrome.scripting.registerContentScripts` (`persistAcrossSessions: true`).
-- `approvedOrigins` list in `chrome.storage.local` + a per-origin host grant from
-  `chrome.permissions.request` (optional_host_permissions) — both restart-durable.
-- Popup "Use OAuth3 here" adds the active tab's origin (activeTab gesture); revoke
-  unregisters + drops the host permission.
-- The instance's own origin (serverUrl + DEFAULT_HOMESERVER) is auto-approved —
-  registered on install/startup/serverUrl-change so sign-in doesn't regress.
+## Design (what gates what)
+- Cookie-triggered syncs only (`syncOne(..., { auto: true })`) pass two gates; every
+  other caller (popup per-jar Sync, `sync-now`, `add-jar`, the 30-min alarm via
+  `syncAll`) is an explicit act / fixed cadence and is never rate-limited.
+- Debounce 1s → 30s (`COOKIE_DEBOUNCE_MS`).
+- Cooldown 15 min (`COOKIE_COOLDOWN_MS`) keyed on the plugin's `lastSync` (any trigger) —
+  half the 30-min alarm so a genuine change lands within 15 min worst-case.
+- Digest: SHA-256 of sorted (name,value) pairs, recorded on successful POST only;
+  identical jar past the cooldown → skip. Failure leaves the digest unset so the next
+  attempt re-POSTs rather than trusting a jar the node may not hold.
 
 ## Checkboxes (from ## Acceptance)
-- [x] On an un-approved site, `typeof window.oauth3 === "undefined"`.
-- [x] "Use OAuth3 here" in the popup → reload → `window.oauth3` object, `connect()` completes; origin survives browser restart.
-- [x] Revoke in popup → reload → `undefined` again; host permission dropped.
-- [x] Instance's own origin (login/dashboard) gets the provider with no manual approve.
+- [x] 10 min of cookie churn → at most one cookie-triggered sync (verified: churn within
+  cooldown adds no entry; base build shows the burst — count 2 after ONE rewrite).
+- [x] Byte-identical jar (rotation that nets out) → no POST, no activity entry; the
+  count stops oscillating.
+- [x] 30-min alarm cadence untouched (`syncAll` ungated); manual popup Sync immediate
+  (verified end-to-end: 2→3 manual, 3→4 alarm-fired).
+- [x] e2e spec `test/autosync.spec.ts` drives the real extension + real server + real
+  dashboard activity view; green on branch, red on base (mutation check).
+- [x] Evidence: `.evidence/issue-15/` (popup + activity-view shots + flow.md).
 
-## Steps
-- [x] manifest: drop static content_scripts; add `scripting` + `activeTab`; optional host perms http+https.
-- [x] service-worker: per-origin register/unregister/sync + `site-info`/`approve-site`/`revoke-site` handlers.
-- [x] popup: site card (origin, state, Use/Stop buttons, permission line) + Advanced save asks for a custom instance origin's grant.
-- [x] `node --check` all JS; manifest JSON valid; `make-staging.sh` builds.
-- [x] Tier 2 walk on the envoy/neko rig (branch build loaded in the shared Brave), screenshots → `.evidence/issue-23/` (13 shots + flow.md; popup/prompt driven with OS-level xdotool, per LESSONS no-CDP rule; walked at `a1d8540` under the branch's old name `staging-oa-29`, dir re-keyed with the rename — no code change).
+## Operator-run remainder
+- The literal logged-in-google.com 10-minute walk on staging (no Google identity on
+  this box; Google de-auths datacenter-IP sessions). Recorded in flow.md and the PR.
